@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+._*
+
+# R
+.Rhistory
+.Rdata
+.RData
+.Rproj.user/
+*.Rproj
+
+# targets pipeline store
+_targets/
+
+# Rcpp compiled objects
+*.o
+*.so
+*.dll
+
+# Editor
+.vscode/
+.idea/
+
+# Claude/AI artifacts
+.claude/
+.playwright-mcp/
