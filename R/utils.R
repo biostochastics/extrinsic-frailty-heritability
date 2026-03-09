@@ -73,7 +73,8 @@ run_cutoff0_robustness <- function(sigma_theta_true, params) {
     gamma_heritable = TRUE, individual_ext = TRUE,
     cutoff = 0, rng_seed = params$MASTER_SEED + 9100L)
 
-  sigma_fit_nc <- calibrate_sigma_theta(true_obs_nc$r_mz, params$M_EX_HIST)
+  sigma_fit_nc <- calibrate_sigma_theta_crn(true_obs_nc$r_mz, params$M_EX_HIST,
+    crn_seed = params$MASTER_SEED + 9150L)
 
   corr_nc <- sim_twin_h2(sigma_fit_nc, 0, sigma_gamma = 0,
     cutoff = 0, rng_seed = params$MASTER_SEED + 9200L)
@@ -491,8 +492,10 @@ run_model_control_sweep <- function(model_name, sweep_type, params) {
   }
 
   # Use parallel::mclapply for SR (Euler-Maruyama is expensive per grid point)
+  # Cap at INNER_MC_CORES to avoid oversubscription under {crew} workers
   mc_cores <- if (model_name == "sr" && nrow(grid) > 1) {
-    min(nrow(grid), max(1L, parallel::detectCores() - 2L))
+    inner_cap <- params$INNER_MC_CORES %||% 1L
+    min(nrow(grid), inner_cap)
   } else {
     1L
   }
@@ -669,4 +672,380 @@ sim_twin_h2_with_zeta <- function(sigma_theta, m_ex, sigma_zeta, rho_tz,
   r_dz <- cor(L_dz1[keep_dz], L_dz2[keep_dz])
 
   list(r_mz = r_mz, r_dz = r_dz, h2 = 2 * (r_mz - r_dz))
+}
+
+
+# ===========================================================================
+# B1: Alternative functional forms for extrinsic frailty DGP
+# ===========================================================================
+
+#' Run Arm 2 under alternative extrinsic frailty functional forms
+#'
+#' Tests whether the bias mechanism is robust to different DGP specifications
+#' for how extrinsic frailty enters the hazard:
+#'   - "lognormal" (default): c_i = m_ex * exp(gamma_i) (multiplicative log-normal)
+#'   - "additive": c_i = m_ex + sigma_gamma * gamma_i (additive Gaussian, truncated at 0)
+#'   - "gamma": c_i = m_ex * g_i, g_i ~ Gamma(shape=1/sigma^2, rate=1/sigma^2)
+#'
+#' @param sigma_theta_true True sigma_theta (oracle)
+#' @param oracle Oracle simulation result
+#' @param params Parameter list
+#' @return Data frame with one row per functional form, showing bias
+run_alt_ext_forms <- function(sigma_theta_true, oracle, params, n_reps = 10L) {
+  forms <- c("lognormal", "additive", "gamma")
+  seed_base <- params$MASTER_SEED + 110000L
+
+  results <- lapply(seq_along(forms), function(i) {
+    form <- forms[i]
+
+    rep_results <- lapply(seq_len(n_reps), function(r) {
+      seed_ir <- seed_base + i * 1000L + r * 100L
+
+      # Step 1: Observe under true DGP with this functional form
+      obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+        sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+        gamma_heritable = TRUE, individual_ext = TRUE,
+        rng_seed = seed_ir, ext_form = form)
+
+      # Step 2: Calibrate misspecified model using CRN for stability
+      sigma_fit <- calibrate_sigma_theta_crn(obs$r_mz, params$M_EX_HIST,
+        crn_seed = seed_ir + 500L)
+
+      # Step 3: Extrapolate to m_ex=0
+      corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
+        rng_seed = seed_ir + 900L)
+
+      data.frame(
+        ext_form = form,
+        rep = r,
+        obs_r_mz = obs$r_mz,
+        sigma_fit = sigma_fit,
+        sigma_infl_pct = 100 * (sigma_fit / sigma_theta_true - 1),
+        h2 = corr$h2,
+        bias = corr$h2 - oracle$h2,
+        bias_pp = 100 * (corr$h2 - oracle$h2),
+        stringsAsFactors = FALSE
+      )
+    })
+
+    do.call(rbind, rep_results)
+  })
+
+  do.call(rbind, results)
+}
+
+
+# ===========================================================================
+# B2: Extended sigma_gamma range
+# ===========================================================================
+
+#' Run bias sweep at high sigma_gamma values (above anchored ceiling)
+#'
+#' Explores bias behavior at sigma_gamma between 0.65 and 1.47,
+#' documenting how the bias scales above the anchored regime.
+#'
+#' @param sigma_theta_true True sigma_theta
+#' @param oracle Oracle simulation result
+#' @param params Parameter list
+#' @return Data frame with one row per sigma_gamma value
+run_extended_sigma_gamma <- function(sigma_theta_true, oracle, params,
+                                     n_reps = 10L) {
+  sg_grid <- c(0.70, 0.80, 0.90, 1.00, 1.20, 1.47)
+  rho_mid <- 0.35  # midpoint of anchored range
+  seed_base <- params$MASTER_SEED + 120000L
+
+  results <- lapply(seq_along(sg_grid), function(i) {
+    sg <- sg_grid[i]
+
+    rep_results <- lapply(seq_len(n_reps), function(r) {
+      seed_ir <- seed_base + i * 1000L + r * 100L
+
+      obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+        sigma_gamma = sg, rho = rho_mid,
+        gamma_heritable = TRUE, individual_ext = TRUE,
+        rng_seed = seed_ir)
+
+      # Use CRN calibration for stability at extreme parameters
+      sigma_fit <- calibrate_sigma_theta_crn(obs$r_mz, params$M_EX_HIST,
+        crn_seed = seed_ir + 500L)
+
+      corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
+        rng_seed = seed_ir + 900L)
+
+      data.frame(
+        sigma_gamma = sg,
+        rho = rho_mid,
+        rep = r,
+        obs_r_mz = obs$r_mz,
+        sigma_fit = sigma_fit,
+        sigma_infl_pct = 100 * (sigma_fit / sigma_theta_true - 1),
+        h2 = corr$h2,
+        bias = corr$h2 - oracle$h2,
+        bias_pp = 100 * (corr$h2 - oracle$h2),
+        stringsAsFactors = FALSE
+      )
+    })
+
+    do.call(rbind, rep_results)
+  })
+
+  do.call(rbind, results)
+}
+
+
+# ===========================================================================
+# B3: Monte Carlo uncertainty bounds
+# ===========================================================================
+
+#' Run primary arms across multiple seeds for MC uncertainty estimation
+#'
+#' Runs Oracle, Arm 1, and Arm 2 at n_seeds independent seeds.
+#' Reports MC SE on h², r_MZ, bias.
+#'
+#' @param sigma_theta_true True sigma_theta
+#' @param params Parameter list
+#' @param n_seeds Number of independent replications (default: 20)
+#' @return List with per-seed results and summary statistics
+run_mc_uncertainty <- function(sigma_theta_true, params, n_seeds = 20L) {
+  seed_base <- params$MASTER_SEED + 130000L
+
+  results <- lapply(seq_len(n_seeds), function(s) {
+    seed_s <- seed_base + s * 10000L
+
+    # Oracle
+    ora <- sim_twin_h2(sigma_theta_true, 0, sigma_gamma = 0,
+      rng_seed = seed_s)
+
+    # Arm 1: correctly specified
+    obs1 <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+      sigma_gamma = 0, rng_seed = seed_s + 100L)
+    sf1 <- calibrate_sigma_theta_crn(obs1$r_mz, params$M_EX_HIST,
+      crn_seed = seed_s + 150L)
+    corr1 <- sim_twin_h2(sf1, 0, sigma_gamma = 0,
+      rng_seed = seed_s + 200L)
+
+    # Arm 2: misspecified
+    obs2 <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+      sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+      gamma_heritable = TRUE, individual_ext = TRUE,
+      rng_seed = seed_s + 300L)
+    sf2 <- calibrate_sigma_theta_crn(obs2$r_mz, params$M_EX_HIST,
+      crn_seed = seed_s + 350L)
+    corr2 <- sim_twin_h2(sf2, 0, sigma_gamma = 0,
+      rng_seed = seed_s + 400L)
+
+    data.frame(
+      seed = s,
+      oracle_h2 = ora$h2,
+      oracle_r_mz = ora$r_mz,
+      arm1_h2 = corr1$h2,
+      arm1_bias_pp = 100 * (corr1$h2 - ora$h2),
+      arm2_h2 = corr2$h2,
+      arm2_bias_pp = 100 * (corr2$h2 - ora$h2),
+      arm2_sigma_fit = sf2,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  df <- do.call(rbind, results)
+
+  list(
+    per_seed = df,
+    summary = data.frame(
+      statistic = c("oracle_h2", "arm1_bias_pp", "arm2_bias_pp",
+                     "arm2_h2", "arm2_sigma_fit"),
+      mean = c(mean(df$oracle_h2), mean(df$arm1_bias_pp),
+               mean(df$arm2_bias_pp), mean(df$arm2_h2),
+               mean(df$arm2_sigma_fit)),
+      sd = c(sd(df$oracle_h2), sd(df$arm1_bias_pp),
+             sd(df$arm2_bias_pp), sd(df$arm2_h2),
+             sd(df$arm2_sigma_fit)),
+      se = c(sd(df$oracle_h2), sd(df$arm1_bias_pp),
+             sd(df$arm2_bias_pp), sd(df$arm2_h2),
+             sd(df$arm2_sigma_fit)) / sqrt(nrow(df)),
+      stringsAsFactors = FALSE
+    )
+  )
+}
+
+
+# ===========================================================================
+# B3b: Multi-model MC uncertainty (GM + MGG + SR)
+# ===========================================================================
+
+#' Run primary arms across multiple seeds for all three mortality models
+#'
+#' Extends B3 to MGG and SR. For each seed, runs Oracle/Arm1/Arm2 under
+#' each model and records bias. Returns long-format data frame with model column.
+#'
+#' @param sigma_theta_true True sigma_theta (for GM)
+#' @param params Parameter list
+#' @param n_seeds Number of independent replications (default: 20)
+#' @return List with per_seed data frame and summary data frame
+#' Run MC uncertainty for a single mortality model
+#'
+#' @param model_name One of "gm", "mgg", "sr"
+#' @param sigma_theta_true True sigma_theta (used for GM)
+#' @param params Parameter list
+#' @param n_seeds Number of independent replications
+#' @return Data frame with one row per seed
+run_mc_uncertainty_model <- function(model_name, sigma_theta_true, params,
+                                     n_seeds = 20L) {
+  seed_base <- params$MASTER_SEED + 150000L
+  n_pairs <- params$N_PAIRS
+  soff <- switch(model_name, gm = 0L, mgg = 1000000L, sr = 2000000L)
+
+  mc_cores <- min(n_seeds, params$INNER_MC_CORES %||% 1L)
+  if (mc_cores > 1L) {
+    message(sprintf("  [mc_unc_%s] Running %d seeds on %d cores",
+                    model_name, n_seeds, mc_cores))
+  }
+
+  results <- parallel::mclapply(seq_len(n_seeds), mc.cores = mc_cores, function(s) {
+    seed_s <- seed_base + soff + s * 10000L
+
+    if (model_name == "gm") {
+      ora <- sim_twin_h2(sigma_theta_true, 0, sigma_gamma = 0,
+        rng_seed = seed_s)
+      obs1 <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+        sigma_gamma = 0, rng_seed = seed_s + 100L)
+      sf1 <- calibrate_sigma_theta_crn(obs1$r_mz, params$M_EX_HIST,
+        crn_seed = seed_s + 150L)
+      corr1 <- sim_twin_h2(sf1, 0, sigma_gamma = 0,
+        rng_seed = seed_s + 200L)
+      obs2 <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+        sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+        gamma_heritable = TRUE, individual_ext = TRUE,
+        rng_seed = seed_s + 300L)
+      sf2 <- calibrate_sigma_theta_crn(obs2$r_mz, params$M_EX_HIST,
+        crn_seed = seed_s + 350L)
+      corr2 <- sim_twin_h2(sf2, 0, sigma_gamma = 0,
+        rng_seed = seed_s + 400L)
+    } else {
+      sim_fn <- if (model_name == "mgg") sim_twin_h2_mgg else sim_twin_h2_sr
+      dname <- if (model_name == "mgg") "sigma_q" else "sigma_Xc"
+      true_d <- if (model_name == "mgg") params$MGG_CV_Q
+        else params$SR_CV_XC * params$SR_MU_XC
+
+      mk_args <- function(disp, ...) {
+        a <- list(...)
+        a[[dname]] <- disp
+        a
+      }
+
+      ora <- do.call(sim_fn, mk_args(true_d,
+        m_ex = 0, n_pairs = n_pairs, rng_seed = seed_s))
+      obs1 <- do.call(sim_fn, mk_args(true_d,
+        m_ex = params$M_EX_HIST, n_pairs = n_pairs,
+        rng_seed = seed_s + 100L))
+      sf1 <- calibrate_dispersion(obs1$r_mz, model = model_name,
+        m_ex = params$M_EX_HIST, n_pairs = n_pairs)
+      corr1 <- do.call(sim_fn, mk_args(sf1,
+        m_ex = 0, n_pairs = n_pairs, rng_seed = seed_s + 200L))
+      obs2 <- do.call(sim_fn, mk_args(true_d,
+        m_ex = params$M_EX_HIST,
+        sigma_gamma = params$SIGMA_GAMMA_DEF,
+        rho = params$RHO_DEF, individual_ext = TRUE,
+        n_pairs = n_pairs, rng_seed = seed_s + 300L))
+      sf2 <- calibrate_dispersion(obs2$r_mz, model = model_name,
+        m_ex = params$M_EX_HIST, n_pairs = n_pairs)
+      corr2 <- do.call(sim_fn, mk_args(sf2,
+        m_ex = 0, n_pairs = n_pairs, rng_seed = seed_s + 400L))
+    }
+
+    data.frame(
+      model = toupper(model_name),
+      seed = s,
+      oracle_h2 = ora$h2,
+      arm1_h2 = corr1$h2,
+      arm1_bias_pp = 100 * (corr1$h2 - ora$h2),
+      arm2_h2 = corr2$h2,
+      arm2_bias_pp = 100 * (corr2$h2 - ora$h2),
+      stringsAsFactors = FALSE
+    )
+  })
+
+  do.call(rbind, results)
+}
+
+#' Combine per-model MC uncertainty results into the multimodel structure
+#'
+#' @param ... Data frames from run_mc_uncertainty_model() calls
+#' @return List with per_seed data frame and summary data frame
+combine_mc_uncertainty_multimodel <- function(...) {
+  df <- do.call(rbind, list(...))
+
+  summ <- do.call(rbind, lapply(split(df, df$model), function(d) {
+    data.frame(
+      model = d$model[1],
+      oracle_h2_mean = mean(d$oracle_h2),
+      oracle_h2_se = sd(d$oracle_h2) / sqrt(nrow(d)),
+      arm1_bias_mean = mean(d$arm1_bias_pp),
+      arm1_bias_se = sd(d$arm1_bias_pp) / sqrt(nrow(d)),
+      arm2_bias_mean = mean(d$arm2_bias_pp),
+      arm2_bias_se = sd(d$arm2_bias_pp) / sqrt(nrow(d)),
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  list(per_seed = df, summary = summ)
+}
+
+# ===========================================================================
+# B4: High-replication m_ex split
+# ===========================================================================
+
+#' Run m_ex split at higher replication to resolve MC noise
+#'
+#' Re-runs the heritable fraction sweep at n_reps replications
+#' to clarify whether the 50% dip is real.
+#'
+#' @param sigma_theta_true True sigma_theta
+#' @param oracle Oracle simulation result
+#' @param params Parameter list
+#' @param n_reps Number of replications per fraction level (default: 5)
+#' @return Data frame with per-replication results (frac_heritable, rep, h2, bias, bias_pp)
+run_mex_split_hires <- function(sigma_theta_true, oracle, params,
+                                 n_reps = 5L) {
+  fractions <- seq(0, 1, by = 0.05)
+  seed_base <- params$MASTER_SEED + 140000L
+
+  results <- lapply(seq_along(fractions), function(i) {
+    frac <- fractions[i]
+
+    rep_results <- lapply(seq_len(n_reps), function(r) {
+      seed_ir <- seed_base + i * 1000L + r * 100L
+      m_inf <- frac * params$M_EX_HIST
+      m_other <- (1 - frac) * params$M_EX_HIST
+
+      if (frac == 0) {
+        # No heritable fraction: all extrinsic is population-constant
+        obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+          sigma_gamma = 0, rng_seed = seed_ir)
+      } else {
+        # Split: c_i = m_other + m_inf * exp(gamma_i - sigma^2/2)
+        obs <- sim_twin_h2_split_mex(sigma_theta_true, m_inf, m_other,
+          sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+          rng_seed = seed_ir)
+      }
+
+      sf <- calibrate_sigma_theta_crn(obs$r_mz, params$M_EX_HIST,
+        crn_seed = seed_ir + 500L)
+      corr <- sim_twin_h2(sf, 0, sigma_gamma = 0,
+        rng_seed = seed_ir + 50L)
+
+      data.frame(
+        frac_heritable = frac,
+        rep = r,
+        h2 = corr$h2,
+        bias = corr$h2 - oracle$h2,
+        bias_pp = 100 * (corr$h2 - oracle$h2),
+        stringsAsFactors = FALSE
+      )
+    })
+
+    do.call(rbind, rep_results)
+  })
+
+  do.call(rbind, results)
 }

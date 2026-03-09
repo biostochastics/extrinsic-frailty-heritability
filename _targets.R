@@ -214,6 +214,36 @@ list(
     calibration_type = "r_mz")),
 
   # =================================================================
+  # Stage 8b: Revision analyses
+  # =================================================================
+
+  # B1: Alternative functional forms for extrinsic frailty DGP (10 reps)
+  tar_target(alt_ext_forms,
+    run_alt_ext_forms(sigma_theta_true, oracle, PARAMS, n_reps = 10L)),
+
+  # B2: Extended sigma_gamma range (above anchored ceiling, 10 reps)
+  tar_target(extended_sigma_gamma,
+    run_extended_sigma_gamma(sigma_theta_true, oracle, PARAMS, n_reps = 10L)),
+
+  # B3: Monte Carlo uncertainty bounds (20 seeds)
+  tar_target(mc_uncertainty,
+    run_mc_uncertainty(sigma_theta_true, PARAMS, n_seeds = 20L)),
+
+  # B3b: Multi-model MC uncertainty (split for crew parallelism)
+  tar_target(mc_unc_gm,
+    run_mc_uncertainty_model("gm", sigma_theta_true, PARAMS, n_seeds = 20L)),
+  tar_target(mc_unc_mgg,
+    run_mc_uncertainty_model("mgg", sigma_theta_true, PARAMS, n_seeds = 20L)),
+  tar_target(mc_unc_sr,
+    run_mc_uncertainty_model("sr", sigma_theta_true, PARAMS, n_seeds = 20L)),
+  tar_target(mc_uncertainty_multimodel,
+    combine_mc_uncertainty_multimodel(mc_unc_gm, mc_unc_mgg, mc_unc_sr)),
+
+  # B4: High-replication m_ex split (5 reps per fraction level)
+  tar_target(mex_split_hires,
+    run_mex_split_hires(sigma_theta_true, oracle, PARAMS, n_reps = 5L)),
+
+  # =================================================================
   # Stage 9: Tables
   # =================================================================
   tar_target(summary_table, build_summary_table(
@@ -238,7 +268,12 @@ list(
     sigma_gamma_bridge, mex_split,
     oracle_fix,
     multi_target_arm = multi_target_arm,
-    mgg_param_comparison = mgg_param_comparison)),
+    mgg_param_comparison = mgg_param_comparison,
+    alt_ext_forms = alt_ext_forms,
+    extended_sigma_gamma = extended_sigma_gamma,
+    mc_uncertainty = mc_uncertainty,
+    mc_uncertainty_multimodel = mc_uncertainty_multimodel,
+    mex_split_hires = mex_split_hires)),
 
   tar_target(controls_table, data.frame(
     Control = c(
@@ -296,6 +331,11 @@ list(
     joint_diagnostic = joint_diagnostic,
     sr_dt_sensitivity = sr_dt_sensitivity,
     model_controls = model_controls_combined,
-    mgg_param_comparison = mgg_param_comparison
+    mgg_param_comparison = mgg_param_comparison,
+    alt_ext_forms = alt_ext_forms,
+    extended_sigma_gamma = extended_sigma_gamma,
+    mc_uncertainty = mc_uncertainty,
+    mc_uncertainty_multimodel = mc_uncertainty_multimodel,
+    mex_split_hires = mex_split_hires
   ))
 )

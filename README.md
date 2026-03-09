@@ -20,7 +20,7 @@ We identify the bias mechanism specific to Shenhar's calibrate-then-extrapolate 
 | Pleiotropy isolation (ρ=0) | 1.376 | 0.528 | +1.9 |
 | Irrelevant trait (ζ) | 1.264 | 0.502 | −0.7 |
 | Oracle fix (correct model) | 1.219 | 0.476 | −3.3 |
-| Cutoff = 0 (no age restriction) | 1.335 | 0.514 | +3.6 |
+| Cutoff = 0 (no age restriction) | 1.323 | 0.509 | +3.1 |
 | Arm 3: Hamilton conditioning | N/A | 0.427 | −8.2 |
 
 The bias decomposes into ~3.7 pp of downward attenuation (estimand mismatch) and +11.4 pp of upward inflation (variance absorption), netting +7.6 pp.
@@ -45,21 +45,24 @@ Parameters anchored to independent immunogenetic evidence: σ\_γ from twin heri
 ## Repository structure
 
 ```
-├── _targets.R              # Pipeline definition (183 targets, static branching)
+├── kornilov_2026_extrinsic_frailty_preprint.pdf  # Compiled manuscript
+├── refs.yml                # Bibliography
+├── proof-draft.md          # Formal proof (Appendix B source)
+├── _targets.R              # Pipeline definition (194 targets, static branching)
 ├── R/
 │   ├── params.R            # Single source of truth for all parameters
 │   ├── sim_core.R          # Lambert W GM solver, hybrid MGG solver, SR Euler-Maruyama
 │   ├── sim_twins.R         # Twin parameter generation, sim_twin_h2()
-│   ├── calibrate.R         # Stochastic bisection (CRN), oracle, joint, multi-target
+│   ├── calibrate.R         # Stochastic bisection (CRN), oracle, joint, multi-target, UQ
 │   ├── utils.R             # Sweep cells, Hamilton arm, model analysis, control sweeps
 │   ├── anchors.R           # σ_γ bridge, tetrachoric, m_ex split, negative ρ
 │   ├── diagnostics.R       # Variance decomposition, joint r_MZ/r_DZ, α/β estimation
-│   ├── plots.R             # All figure-generating functions (16+ plots)
+│   ├── plots.R             # All figure-generating functions (21 plots, Helvetica Neue)
 │   └── export.R            # CSV/JSON export
 ├── src/
 │   └── sim_lifespan_sr.cpp # Rcpp/C++ SR solver (Xoroshiro128+ RNG, ~4.6× speedup)
 ├── tables/                 # Pipeline outputs (CSV/JSON)
-│   ├── scalars.json        # All scalar results
+│   ├── scalars.json        # All scalar results (dynamic data binding for Typst)
 │   ├── summary.csv         # Main summary table
 │   ├── models.csv          # Cross-model validation
 │   ├── sweep.csv           # Full 81-cell sensitivity grid
@@ -98,7 +101,7 @@ Rscript -e 'targets::tar_visnetwork()'
 Rscript -e 'targets::tar_read(arm2_corr)'
 ```
 
-The pipeline uses `{crew}` for parallel execution with 10 local workers. It defines 183 targets organized in a DAG with `tar_map` static branching for the 81-cell sensitivity sweep and 56-cell anchored sweep. A master seed (66829) propagates deterministic sub-seeds to every target for full reproducibility.
+The pipeline uses `{crew}` for parallel execution with 10 local workers. It defines 194 targets organized in a DAG with `tar_map` static branching for the 81-cell sensitivity sweep and 56-cell anchored sweep. A master seed (66829) propagates deterministic sub-seeds to every target for full reproducibility.
 
 ### Pipeline architecture
 
@@ -111,10 +114,16 @@ Stage 4:  Variance decomp     → α, β coefficients
 Stage 5:  Model validation    → MGG + SR arms
 Stage 6:  Additional controls → Dose-response, pleiotropy isolation, irrelevant trait
 Stage 7:  Diagnostics         → Joint r_MZ/r_DZ, σ_γ bridge, m_ex split, negative ρ
-Stage 8:  Calibration UQ      → Bootstrap uncertainty
+Stage 8:  Calibration UQ      → Bootstrap uncertainty, revision analyses
+Stage 8b: Revision analyses   → Alt functional forms (B1), extended σ_γ (B2),
+                                 MC uncertainty (B3/B3b), high-rep m_ex split (B4)
 Stage 9:  Tables              → CSV/JSON export
 Stage 10: Figures             → All plots
 ```
+
+## Manuscript
+
+The precompiled manuscript PDF (`kornilov_2026_extrinsic_frailty_preprint.pdf`) is included in the repository. Figures and scalar results in `tables/scalars.json` are dynamically bound into the manuscript at compile time.
 
 ## Key technical notes
 

@@ -51,5 +51,10 @@ PARAMS <- list(
   HAM_E_WEIGHT = 0.61,
   HAM_EXT_SLOPE = 0.62,
   HAM_EXT_SHIFT = 0.70,
-  HAM_TARGET_H2 = 0.45
+  HAM_TARGET_H2 = 0.45,
+
+  # --- Inner parallelism cap (for mclapply inside {crew} workers) ---
+  # SR sweeps use mclapply for grid points; cap to avoid oversubscription
+  # with {crew}'s 10 workers. 4 cores × ~2 concurrent SR targets = 8, safe on 14.
+  INNER_MC_CORES = 4L
 )

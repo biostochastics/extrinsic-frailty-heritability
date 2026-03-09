@@ -239,7 +239,12 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
                             sigma_gamma_bridge, mex_split,
                             oracle_fix,
                             multi_target_arm = NULL,
-                            mgg_param_comparison = NULL) {
+                            mgg_param_comparison = NULL,
+                            alt_ext_forms = NULL,
+                            extended_sigma_gamma = NULL,
+                            mc_uncertainty = NULL,
+                            mc_uncertainty_multimodel = NULL,
+                            mex_split_hires = NULL) {
 
   arm2_bias <- arm2$h2 - oracle$h2
   arm1_bias <- arm1$h2 - oracle$h2
@@ -405,6 +410,103 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
       mgg_comp_mean_age = round(ds$mean_age[ds$mapping == "compensatory"]),
       mgg_paper_mean_age = round(ds$mean_age[ds$mapping == "paper"]),
       mgg_param_h2_diff_pp = round(100 * (paper$h2 - comp$h2), 1)
+    )
+  },
+
+  # --- B1: Alternative extrinsic frailty forms (multi-rep) ---
+  if (!is.null(alt_ext_forms)) {
+    b1_agg <- aggregate(bias_pp ~ ext_form, data = alt_ext_forms, FUN = mean)
+    b1_se  <- aggregate(bias_pp ~ ext_form, data = alt_ext_forms,
+      FUN = function(x) sd(x) / sqrt(length(x)))
+    ln_mean <- b1_agg$bias_pp[b1_agg$ext_form == "lognormal"]
+    ad_mean <- b1_agg$bias_pp[b1_agg$ext_form == "additive"]
+    ga_mean <- b1_agg$bias_pp[b1_agg$ext_form == "gamma"]
+    ln_se <- b1_se$bias_pp[b1_se$ext_form == "lognormal"]
+    ad_se <- b1_se$bias_pp[b1_se$ext_form == "additive"]
+    ga_se <- b1_se$bias_pp[b1_se$ext_form == "gamma"]
+    list(
+      b1_ln_bias_pp = round(ln_mean, 1),
+      b1_ln_se_pp = round(ln_se, 2),
+      b1_add_bias_pp = round(ad_mean, 1),
+      b1_add_se_pp = round(ad_se, 2),
+      b1_gamma_bias_pp = round(ga_mean, 1),
+      b1_gamma_se_pp = round(ga_se, 2),
+      b1_min_pp = round(min(b1_agg$bias_pp), 1),
+      b1_max_pp = round(max(b1_agg$bias_pp), 1),
+      b1_spread_pp = round(diff(range(b1_agg$bias_pp)), 1),
+      b1_n_reps = max(alt_ext_forms$rep)
+    )
+  },
+
+  # --- B2: Extended σ_γ range (multi-rep) ---
+  if (!is.null(extended_sigma_gamma)) {
+    b2_agg <- aggregate(bias_pp ~ sigma_gamma, data = extended_sigma_gamma, FUN = mean)
+    b2_se  <- aggregate(bias_pp ~ sigma_gamma, data = extended_sigma_gamma,
+      FUN = function(x) sd(x) / sqrt(length(x)))
+    b2_sinfl <- aggregate(sigma_infl_pct ~ sigma_gamma, data = extended_sigma_gamma,
+      FUN = mean)
+    sg070_m <- b2_agg$bias_pp[abs(b2_agg$sigma_gamma - 0.70) < 0.01]
+    sg100_m <- b2_agg$bias_pp[abs(b2_agg$sigma_gamma - 1.00) < 0.01]
+    bridge_m <- b2_agg$bias_pp[abs(b2_agg$sigma_gamma - 1.47) < 0.01]
+    bridge_se <- b2_se$bias_pp[abs(b2_se$sigma_gamma - 1.47) < 0.01]
+    bridge_sinfl <- b2_sinfl$sigma_infl_pct[abs(b2_sinfl$sigma_gamma - 1.47) < 0.01]
+    list(
+      b2_sg070_pp = round(sg070_m, 1),
+      b2_sg100_pp = round(sg100_m, 1),
+      b2_bridge_pp = round(bridge_m, 1),
+      b2_bridge_se_pp = round(bridge_se, 2),
+      b2_bridge_sigma_infl = round(bridge_sinfl, 1),
+      b2_n_reps = max(extended_sigma_gamma$rep)
+    )
+  },
+
+  # --- B3: MC uncertainty bounds ---
+  if (!is.null(mc_uncertainty)) {
+    s <- mc_uncertainty$summary
+    seeds <- mc_uncertainty$per_seed
+    m <- mean(seeds$arm2_bias_pp)
+    se <- sd(seeds$arm2_bias_pp) / sqrt(nrow(seeds))
+    list(
+      b3_n_seeds = nrow(seeds),
+      b3_arm2_mean_pp = round(m, 2),
+      b3_arm2_se = round(se, 2),
+      b3_arm2_ci_lo = round(m - 1.96 * se, 1),
+      b3_arm2_ci_hi = round(m + 1.96 * se, 1),
+      b3_oracle_mean = round(s$mean[s$statistic == "oracle_h2"], 3),
+      b3_oracle_sd = round(s$sd[s$statistic == "oracle_h2"], 3),
+      b3_arm1_mean_pp = round(s$mean[s$statistic == "arm1_bias_pp"], 2),
+      b3_arm1_sd_pp = round(s$sd[s$statistic == "arm1_bias_pp"], 2)
+    )
+  },
+
+  # --- B3b: Multi-model MC uncertainty ---
+  if (!is.null(mc_uncertainty_multimodel)) {
+    mm <- mc_uncertainty_multimodel$summary
+    mm_gm <- mm[mm$model == "GM", ]
+    mm_mgg <- mm[mm$model == "MGG", ]
+    mm_sr <- mm[mm$model == "SR", ]
+    list(
+      b3b_gm_arm2_mean_pp = round(mm_gm$arm2_bias_mean, 1),
+      b3b_gm_arm2_se_pp = round(mm_gm$arm2_bias_se, 2),
+      b3b_gm_arm1_mean_pp = round(mm_gm$arm1_bias_mean, 1),
+      b3b_mgg_arm2_mean_pp = round(mm_mgg$arm2_bias_mean, 1),
+      b3b_mgg_arm2_se_pp = round(mm_mgg$arm2_bias_se, 2),
+      b3b_mgg_arm1_mean_pp = round(mm_mgg$arm1_bias_mean, 1),
+      b3b_sr_arm2_mean_pp = round(mm_sr$arm2_bias_mean, 1),
+      b3b_sr_arm2_se_pp = round(mm_sr$arm2_bias_se, 2),
+      b3b_sr_arm1_mean_pp = round(mm_sr$arm1_bias_mean, 1)
+    )
+  },
+
+  # --- B4: m_ex split hires ---
+  if (!is.null(mex_split_hires)) {
+    agg <- aggregate(bias_pp ~ frac_heritable, data = mex_split_hires,
+                     FUN = mean)
+    list(
+      b4_n_reps = max(mex_split_hires$rep),
+      b4_frac0_pp = round(agg$bias_pp[agg$frac_heritable == 0], 1),
+      b4_frac50_pp = round(agg$bias_pp[agg$frac_heritable == 0.5], 1),
+      b4_frac100_pp = round(agg$bias_pp[agg$frac_heritable == 1.0], 1)
     )
   }
   )

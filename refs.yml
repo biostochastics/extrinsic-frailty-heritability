@@ -1,0 +1,200 @@
+joshi2017:
+  type: article
+  title: "Genome-wide meta-analysis associates HLA-DQA1/DRB1 and LPA and lifestyle factors with human longevity"
+  author: ["Joshi, Peter K.", "Pirastu, Nicola", "Kentistou, Katherine A.", "Fischer, Krista", "Hofer, Edith", "Schraut, Katharina E.", "Clark, David W.", "Wilson, James F."]
+  date: 2017
+  page-range: "910"
+  serial-number:
+    doi: "10.1038/s41467-017-00934-5"
+  parent:
+    type: periodical
+    title: Nature Communications
+    volume: 8
+
+schurz2024:
+  type: article
+  title: "Multi-ancestry meta-analysis of host genetic susceptibility to tuberculosis identifies shared genetic architecture"
+  author: ["Schurz, Haiko", "Naranbhai, Vivek", "Yates, Tom A.", "Gilchrist, James J.", "Parks, Tom", "Dodd, Peter J.", "Möller, Marlo", "Hoal, Eileen G.", "Morris, Andrew P.", "Hill, Adrian V. S."]
+  date: 2024
+  page-range: e84394
+  serial-number:
+    doi: "10.7554/eLife.84394"
+  parent:
+    type: periodical
+    title: eLife
+    volume: 13
+
+tervi2023:
+  type: article
+  title: "Large registry-based analysis of genetic predisposition to tuberculosis identifies genetic risk factors at HLA"
+  author: ["Tervi, Anniina", "Junna, Nella", "Broberg, Martin", "Jones, Samuel E.", "Strausz, Satu", "Kreivi, Hanna-Riikka", "Heckman, Caroline A.", "Ollila, Hanna M."]
+  date: 2023
+  page-range: 161-172
+  serial-number:
+    doi: "10.1093/hmg/ddac212"
+  parent:
+    type: periodical
+    title: Human Molecular Genetics
+    volume: 32
+    issue: 1
+
+franceschi2000:
+  type: article
+  title: "Inflamm-aging: an evolutionary perspective on immunosenescence"
+  author: ["Franceschi, Claudio", "Bonafè, Massimiliano", "Valensin, Silvana"]
+  date: 2000
+  page-range: 244-254
+  serial-number:
+    doi: "10.1111/j.1749-6632.2000.tb06651.x"
+  parent:
+    type: periodical
+    title: Annals of the New York Academy of Sciences
+    volume: 908
+
+hamilton2026:
+  type: article
+  title: "Misclassification of heritable mortality undermines estimates of intrinsic life span heritability"
+  author: ["Hamilton, Fergus"]
+  date: 2026
+  serial-number:
+    doi: "10.64898/2026.02.26.26347172"
+  parent:
+    type: periodical
+    title: medRxiv
+
+obel2010:
+  type: article
+  title: "Genetic and environmental influences on risk of death due to infections assessed in Danish twins, 1943–2001"
+  author: ["Obel, Niels", "Christensen, Kaare", "Petersen, Inge", "Sørensen, Thorkild I. A.", "Skytthe, Axel"]
+  date: 2010
+  page-range: 1007-1013
+  serial-number:
+    doi: "10.1093/aje/kwq037"
+  parent:
+    type: periodical
+    title: American Journal of Epidemiology
+    volume: 171
+    issue: 9
+
+petersen2010:
+  type: article
+  title: "Genetic influences on incidence and case-fatality of infectious disease"
+  author: ["Petersen, Liselotte", "Andersen, Per Kragh", "Sørensen, Thorkild I. A."]
+  date: 2010
+  page-range: e10603
+  serial-number:
+    doi: "10.1371/journal.pone.0010603"
+  parent:
+    type: periodical
+    title: PLoS ONE
+    volume: 5
+    issue: 5
+
+qiu2025:
+  type: article
+  title: "COVID-19 infection and longevity: an observational and Mendelian randomization study"
+  author: ["Qiu, Shizheng"]
+  date: 2025
+  page-range: "283"
+  serial-number:
+    doi: "10.1186/s12967-024-05932-y"
+  parent:
+    type: periodical
+    title: Journal of Translational Medicine
+    volume: 23
+
+rosa2019:
+  type: article
+  title: "A Mendelian randomization study of IL6 signaling in cardiovascular diseases, immune-related disorders and longevity"
+  author: ["Rosa, Mounia", "Chignon, Arnaud", "Li, Zhonglin"]
+  date: 2019
+  page-range: "23"
+  serial-number:
+    doi: "10.1038/s41525-019-0097-4"
+  parent:
+    type: periodical
+    title: npj Genomic Medicine
+    volume: 4
+
+ruby2018:
+  type: article
+  title: "Estimates of the heritability of human longevity are substantially inflated due to assortative mating"
+  author: ["Ruby, J. Graham", "Wright, Kevin M.", "Rand, Kristin A."]
+  date: 2018
+  page-range: 1109-1124
+  serial-number:
+    doi: "10.1534/genetics.118.301613"
+  parent:
+    type: periodical
+    title: Genetics
+    volume: 210
+    issue: 3
+
+shenhar2026:
+  type: article
+  title: "Heritability of intrinsic human life span is about 50% when confounding factors are addressed"
+  author: ["Shenhar, Binyamin", "Pridham, Gavin", "Lopes de Oliveira, Tatiana", "Raz, Noa", "Yang, Yanyu", "Deelen, Joris", "Hägg, Sara", "Alon, Uri"]
+  date: 2026
+  page-range: 504-510
+  serial-number:
+    doi: "10.1126/science.adz1187"
+  parent:
+    type: periodical
+    title: Science
+    volume: 391
+    issue: 6784
+
+sorensen1988:
+  type: article
+  title: "Genetic and environmental influences on premature death in adult adoptees"
+  author: ["Sørensen, Thorkild I. A.", "Nielsen, Gordon G.", "Andersen, Per Kragh", "Teasdale, Thomas W."]
+  date: 1988
+  page-range: 727-732
+  serial-number:
+    doi: "10.1056/NEJM198803243181202"
+  parent:
+    type: periodical
+    title: New England Journal of Medicine
+    volume: 318
+    issue: 12
+
+wienke2003:
+  type: article
+  title: "The heritability of cause-specific mortality: a correlated gamma-frailty model applied to mortality due to respiratory diseases in Danish twins born 1870–1930"
+  author: ["Wienke, Andreas", "Holm, Niels V.", "Christensen, Kaare", "Skytthe, Axel", "Vaupel, James W.", "Yashin, Anatoli I."]
+  date: 2003
+  page-range: 3873-3887
+  serial-number:
+    doi: "10.1002/sim.1669"
+  parent:
+    type: periodical
+    title: Statistics in Medicine
+    volume: 22
+    issue: 24
+
+yashin1999:
+  type: article
+  title: "Half of the variation in susceptibility to mortality is genetic: findings from Swedish twin survival data"
+  author: ["Yashin, Anatoli I.", "Iachine, Ivan A.", "Harris, Jennifer R."]
+  date: 1999
+  page-range: 11-19
+  serial-number:
+    doi: "10.1023/A:1021481620934"
+  parent:
+    type: periodical
+    title: Behavior Genetics
+    volume: 29
+    issue: 1
+
+ying2021:
+  type: article
+  title: "Genetic and phenotypic analysis of the causal relationship between aging and COVID-19"
+  author: ["Ying, Kejun", "Zhai, Ranran", "Pyrkov, Timothy V."]
+  date: 2021
+  page-range: "35"
+  serial-number:
+    doi: "10.1038/s43856-021-00033-z"
+  parent:
+    type: periodical
+    title: Communications Medicine
+    volume: 1

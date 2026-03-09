@@ -111,23 +111,49 @@ sim_twin_h2 <- function(sigma_theta, m_ex, sigma_gamma = 0, rho = 0,
                         gamma_heritable = TRUE, individual_ext = TRUE,
                         cutoff = PARAMS$CUTOFF_AGE,
                         n = PARAMS$N_PAIRS,
-                        rng_seed = NULL) {
+                        rng_seed = NULL,
+                        ext_form = "lognormal") {
   if (!is.null(rng_seed)) set.seed(rng_seed)
 
   b <- PARAMS$B_GOMP
   t_max <- PARAMS$T_MAX
 
+  # Helper: map gamma draws to individual extrinsic hazards
+  .make_c_ext <- function(gamma_vec, m_ex_val, sigma_gamma_val, ext_form_val) {
+    if (!individual_ext || sigma_gamma_val == 0) return(rep(m_ex_val, length(gamma_vec)))
+    switch(ext_form_val,
+      lognormal = {
+        shift <- sigma_gamma_val^2 / 2
+        m_ex_val * exp(gamma_vec - shift)
+      },
+      additive = {
+        # c_i = m_ex * max(1 + gamma_vec, 0), gamma_vec ~ N(0, sigma_gamma^2)
+        # Relative additive: variation proportional to m_ex, dimensionless.
+        # E[c_i] ≈ m_ex (slight upward bias from truncation, negligible for sigma_gamma < 1)
+        m_ex_val * pmax(1 + gamma_vec, 0)
+      },
+      gamma = {
+        # gamma_vec ~ N(0, sigma_gamma^2); map to Gamma frailty with E[g]=1
+        # Use CDF transform: p = pnorm(gamma_vec/sigma_gamma), g = qgamma(p, ...)
+        # NOTE: For gamma form, sigma_gamma_val is interpreted as CV of the
+        # multiplicative frailty (Var(g) = sigma^2), not SD on log scale.
+        shape <- 1 / sigma_gamma_val^2
+        p <- pnorm(gamma_vec / sigma_gamma_val)
+        # Avoid exact 0/1 for qgamma
+        p <- pmin(pmax(p, 1e-10), 1 - 1e-10)
+        g <- qgamma(p, shape = shape, rate = shape)  # E[g]=1
+        m_ex_val * g
+      },
+      stop("Unknown ext_form: ", ext_form_val)
+    )
+  }
+
   # --- MZ twins ---
   params_mz <- gen_twin_params_gm(n,
     r_g = 1.0, sigma_theta, sigma_gamma, rho, gamma_heritable
   )
-  if (individual_ext && sigma_gamma > 0) {
-    shift <- sigma_gamma^2 / 2
-    c_mz1 <- m_ex * exp(params_mz$gamma1 - shift)
-    c_mz2 <- m_ex * exp(params_mz$gamma2 - shift)
-  } else {
-    c_mz1 <- c_mz2 <- m_ex
-  }
+  c_mz1 <- .make_c_ext(params_mz$gamma1, m_ex, sigma_gamma, ext_form)
+  c_mz2 <- .make_c_ext(params_mz$gamma2, m_ex, sigma_gamma, ext_form)
   L_mz1 <- sim_lifespan_gm(params_mz$theta1, b, c_mz1, t_max)
   L_mz2 <- sim_lifespan_gm(params_mz$theta2, b, c_mz2, t_max)
 
@@ -138,13 +164,8 @@ sim_twin_h2 <- function(sigma_theta, m_ex, sigma_gamma = 0, rho = 0,
   params_dz <- gen_twin_params_gm(n,
     r_g = 0.5, sigma_theta, sigma_gamma, rho, gamma_heritable
   )
-  if (individual_ext && sigma_gamma > 0) {
-    shift <- sigma_gamma^2 / 2
-    c_dz1 <- m_ex * exp(params_dz$gamma1 - shift)
-    c_dz2 <- m_ex * exp(params_dz$gamma2 - shift)
-  } else {
-    c_dz1 <- c_dz2 <- m_ex
-  }
+  c_dz1 <- .make_c_ext(params_dz$gamma1, m_ex, sigma_gamma, ext_form)
+  c_dz2 <- .make_c_ext(params_dz$gamma2, m_ex, sigma_gamma, ext_form)
   L_dz1 <- sim_lifespan_gm(params_dz$theta1, b, c_dz1, t_max)
   L_dz2 <- sim_lifespan_gm(params_dz$theta2, b, c_dz2, t_max)
 
