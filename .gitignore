@@ -1,6 +1,19 @@
 # macOS
 .DS_Store
 ._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
 # R
 .Rhistory
@@ -17,10 +30,25 @@ _targets/
 *.so
 *.dll
 
-# Editor
+# Editor / IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Claude/AI artifacts
+# Claude / AI artifacts
 .claude/
+.claude_memory/
+.clauderc
+.cursorrules
+.aider*
+.copilot/
+
+# Playwright MCP
 .playwright-mcp/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
