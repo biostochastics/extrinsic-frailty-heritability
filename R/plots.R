@@ -200,11 +200,11 @@ plot_main_arms <- function(main_arms_replicated, robustness_cutoff0 = NULL) {
   misspec_pos <- which(display_order == misspec_cond)
 
   p1 <- ggplot2::ggplot(df, ggplot2::aes(x = Condition, y = h2)) +
-    # Subtle gray/pink background for Misspecified row
+    # Gray background highlight for Misspecified row
     ggplot2::annotate("rect",
       xmin = misspec_pos - 0.5, xmax = misspec_pos + 0.5,
       ymin = 0.37, ymax = 0.66,
-      fill = alpha("#D64045", 0.08), color = NA) +
+      fill = "gray88", color = NA) +
     ggplot2::geom_hline(yintercept = oracle_h2,
                         linetype = "dashed", color = "gray55", linewidth = 0.4) +
     ggplot2::geom_boxplot(data = seed_long,
@@ -232,11 +232,11 @@ plot_main_arms <- function(main_arms_replicated, robustness_cutoff0 = NULL) {
   # --- Right panel: bias lollipop ---
   p2 <- ggplot2::ggplot(df, ggplot2::aes(x = Condition, y = bias_pp,
                                           color = Condition)) +
-    # Subtle gray/pink background for Misspecified row
+    # Gray background highlight for Misspecified row
     ggplot2::annotate("rect",
       xmin = misspec_pos - 0.5, xmax = misspec_pos + 0.5,
-      ymin = -40, ymax = 40,
-      fill = alpha("#D64045", 0.08), color = NA) +
+      ymin = -10, ymax = 10,
+      fill = "gray88", color = NA) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
                         color = "gray55", linewidth = 0.4) +
     ggplot2::geom_segment(ggplot2::aes(xend = Condition, y = 0, yend = bias_pp),
@@ -244,6 +244,7 @@ plot_main_arms <- function(main_arms_replicated, robustness_cutoff0 = NULL) {
     ggplot2::geom_point(size = 2) +
     ggplot2::coord_flip() +
     ggplot2::scale_x_discrete(limits = display_order) +
+    ggplot2::scale_y_continuous(limits = c(-10, 10), breaks = seq(-10, 10, by = 5)) +
     ggplot2::scale_color_manual(values = condition_colors, guide = "none") +
     ggplot2::labs(title = "Bias vs oracle (pp)",
                   x = NULL, y = "Bias (pp)") +
@@ -361,7 +362,7 @@ plot_anchored_heatmap <- function(anchored_df) {
 plot_model_comparison <- function(model_table) {
   df_long <- data.frame(
     Model = rep(model_table$Model, 2),
-    Arm = rep(c("Baseline (correctly specified)", "Misspecified (omitted familial)"), each = nrow(model_table)),
+    Arm = rep(c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic"), each = nrow(model_table)),
     bias_pp = c(model_table$Baseline_bias_pp, model_table$Misspec_bias_pp),
     stringsAsFactors = FALSE
   )
@@ -377,8 +378,8 @@ plot_model_comparison <- function(model_table) {
       vjust = -0.5, size = LABEL_SIZE
     ) +
     ggplot2::scale_fill_manual(
-      values = c("Baseline (correctly specified)" = unname(PAL["Null"]),
-                 "Misspecified (omitted familial)" = unname(PAL["Biased"]))
+      values = c("Baseline: correctly specified" = unname(PAL["Null"]),
+                 "Misspecified: omitted familial extrinsic" = unname(PAL["Biased"]))
     ) +
     ggplot2::labs(
       title = "Bias across mortality models",
@@ -427,14 +428,33 @@ plot_controls <- function(controls_table) {
 #'
 #' @param dose_response_df Data frame from dose_response target
 #' @return ggplot object
-plot_dose_response <- function(dose_response_df) {
-  ggplot2::ggplot(dose_response_df,
+plot_dose_response <- function(dose_response_obj) {
+  # Accept either a list (new format: $summary + $per_seed) or a data.frame (legacy)
+  if (is.data.frame(dose_response_obj)) {
+    dose_response_df <- dose_response_obj
+    per_seed <- NULL
+  } else {
+    dose_response_df <- dose_response_obj$summary
+    per_seed <- dose_response_obj$per_seed
+  }
+
+  p <- ggplot2::ggplot(dose_response_df,
                   ggplot2::aes(x = m_ex * 1000, y = bias_pp)) +
     {if ("se_pp" %in% names(dose_response_df))
       ggplot2::geom_ribbon(
         ggplot2::aes(ymin = lo95_pp, ymax = hi95_pp),
         fill = PAL["Biased"], alpha = 0.15)
-    } +
+    }
+
+  # Individual seed dots (faint, behind summary)
+  if (!is.null(per_seed)) {
+    p <- p + ggplot2::geom_point(data = per_seed,
+      ggplot2::aes(x = m_ex * 1000, y = bias_pp),
+      color = PAL["Biased"], alpha = 0.2, size = 1,
+      inherit.aes = FALSE)
+  }
+
+  p +
     ggplot2::geom_line(color = PAL["Biased"], linewidth = 1) +
     ggplot2::geom_point(color = PAL["Biased"], size = 2.5) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
@@ -921,12 +941,14 @@ plot_negative_rho_multimodel <- function(neg_rho_gm, model_controls) {
 #' @param model_controls Combined model controls data frame
 #' @return ggplot object
 plot_dose_response_multimodel <- function(dose_response_gm, model_controls) {
+  # Accept either list (new) or data.frame (legacy)
+  gm_summ <- if (is.data.frame(dose_response_gm)) dose_response_gm else dose_response_gm$summary
   gm_df <- data.frame(
-    model = "GM", m_ex = dose_response_gm$m_ex,
-    bias_pp = dose_response_gm$bias_pp,
-    se_pp = if ("se_pp" %in% names(dose_response_gm)) dose_response_gm$se_pp else NA_real_,
-    lo95_pp = if ("lo95_pp" %in% names(dose_response_gm)) dose_response_gm$lo95_pp else NA_real_,
-    hi95_pp = if ("hi95_pp" %in% names(dose_response_gm)) dose_response_gm$hi95_pp else NA_real_,
+    model = "GM", m_ex = gm_summ$m_ex,
+    bias_pp = gm_summ$bias_pp,
+    se_pp = if ("se_pp" %in% names(gm_summ)) gm_summ$se_pp else NA_real_,
+    lo95_pp = if ("lo95_pp" %in% names(gm_summ)) gm_summ$lo95_pp else NA_real_,
+    hi95_pp = if ("hi95_pp" %in% names(gm_summ)) gm_summ$hi95_pp else NA_real_,
     stringsAsFactors = FALSE
   )
   mc_dr <- model_controls[model_controls$sweep_type == "dose_response", ]
@@ -981,12 +1003,12 @@ plot_pleiotropy_multimodel <- function(controls_table, model_controls) {
   mc_pl <- model_controls[model_controls$sweep_type == "pleiotropy_isolation", ]
 
   # GM arm2 reference and rho=0 from controls_table
-  gm_arm2 <- controls_table$bias_pp[controls_table$Control == "Misspecified (reference)"]
-  gm_rho0 <- controls_table$bias_pp[controls_table$Control == "Check: pleiotropy only (ρ=0)"]
+  gm_arm2 <- controls_table$bias_pp[controls_table$Control == "Misspecified: omitted familial extrinsic"]
+  gm_rho0 <- controls_table$bias_pp[controls_table$Control == "Check: pleiotropy only"]
 
   df <- data.frame(
     Model = c("GM", "GM", "MGG", "MGG", "SR", "SR"),
-    Condition = rep(c("Misspecified (ρ=0.4)", "Check: pleiotropy only (ρ=0)"), 3),
+    Condition = rep(c("Misspecified: omitted familial extrinsic", "Check: pleiotropy only"), 3),
     bias_pp = c(
       gm_arm2, gm_rho0,
       mc_pl$bias_pp[mc_pl$model == "mgg"], NA,
@@ -1213,26 +1235,26 @@ plot_mc_uncertainty <- function(mc_result) {
 
   # Reshape to long format
   df_long <- rbind(
-    data.frame(seed = df$seed, arm = "Misspecified (omitted familial)",
+    data.frame(seed = df$seed, arm = "Misspecified: omitted familial extrinsic",
                bias_pp = df$arm2_bias_pp, stringsAsFactors = FALSE),
-    data.frame(seed = df$seed, arm = "Baseline (correctly specified)",
+    data.frame(seed = df$seed, arm = "Baseline: correctly specified",
                bias_pp = df$arm1_bias_pp, stringsAsFactors = FALSE)
   )
   df_long$arm <- factor(df_long$arm,
-    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
+    levels = c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic"))
 
   # Summary for mean + CI bands
   ci_df <- data.frame(
-    arm = factor(c("Baseline (correctly specified)", "Misspecified (omitted familial)"),
-                 levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)")),
+    arm = factor(c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic"),
+                 levels = c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic")),
     mean = c(arm1_mean, arm2_mean),
     lo = c(arm1_mean - t_crit * arm1_se, arm2_mean - t_crit * arm2_se),
     hi = c(arm1_mean + t_crit * arm1_se, arm2_mean + t_crit * arm2_se),
     stringsAsFactors = FALSE
   )
 
-  arm_colors <- c("Baseline (correctly specified)" = unname(PAL["Null"]),
-                   "Misspecified (omitted familial)" = unname(PAL["Biased"]))
+  arm_colors <- c("Baseline: correctly specified" = unname(PAL["Null"]),
+                   "Misspecified: omitted familial extrinsic" = unname(PAL["Biased"]))
 
   ggplot2::ggplot(df_long, ggplot2::aes(x = bias_pp, y = factor(seed), color = arm)) +
     ggplot2::facet_wrap(~ arm, scales = "free_x", ncol = 2) +
@@ -1308,7 +1330,7 @@ plot_mex_split_hires <- function(hires_df) {
 # B3b: Multi-model MC uncertainty (forest plot by model)
 # ===================================================================
 
-#' Forest plot of Arm 2 bias across GM, MGG, SR with per-seed dots and CIs
+#' Forest plot of Misspecified bias across GM, MGG, SR with per-seed dots and CIs
 #'
 #' @param mm_result List from run_mc_uncertainty_multimodel()
 #' @return ggplot object
@@ -1334,27 +1356,27 @@ plot_mc_uncertainty_multimodel <- function(mm_result) {
   # Long format for both arms
   df_long <- rbind(
     data.frame(model = df$model, seed = df$seed,
-               arm = "Misspecified (omitted familial)", bias_pp = df$arm2_bias_pp,
+               arm = "Misspecified: omitted familial extrinsic", bias_pp = df$arm2_bias_pp,
                stringsAsFactors = FALSE),
     data.frame(model = df$model, seed = df$seed,
-               arm = "Baseline (correctly specified)", bias_pp = df$arm1_bias_pp,
+               arm = "Baseline: correctly specified", bias_pp = df$arm1_bias_pp,
                stringsAsFactors = FALSE)
   )
   df_long$arm <- factor(df_long$arm,
-    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
+    levels = c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic"))
 
   summ_long <- rbind(
-    data.frame(model = summ$model, arm = "Misspecified (omitted familial)",
+    data.frame(model = summ$model, arm = "Misspecified: omitted familial extrinsic",
                mean_pp = summ$arm2_bias_mean,
                ci_lo = summ$ci_lo_arm2, ci_hi = summ$ci_hi_arm2,
                stringsAsFactors = FALSE),
-    data.frame(model = summ$model, arm = "Baseline (correctly specified)",
+    data.frame(model = summ$model, arm = "Baseline: correctly specified",
                mean_pp = summ$arm1_bias_mean,
                ci_lo = summ$ci_lo_arm1, ci_hi = summ$ci_hi_arm1,
                stringsAsFactors = FALSE)
   )
   summ_long$arm <- factor(summ_long$arm,
-    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
+    levels = c("Baseline: correctly specified", "Misspecified: omitted familial extrinsic"))
 
   ggplot2::ggplot(df_long,
                   ggplot2::aes(x = bias_pp, y = model, color = model)) +
@@ -1610,7 +1632,7 @@ plot_mz_concordance <- function(mz_concordance, mz_concordance_decoupled = NULL)
       y = "Net bias (pp)",
       color = NULL, fill = NULL, shape = NULL, linetype = NULL
     ) +
-    theme_pub() +
+    theme_pub(base_size = 13) +
     ggplot2::theme(
       legend.position = "bottom",
       legend.margin = ggplot2::margin(t = -5)

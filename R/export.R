@@ -268,9 +268,10 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     abs(anchored_results$rho - 0.35) < 0.01 &
     abs(anchored_results$sigma_gamma - 0.65) < 0.01, ]
 
-  # Dose-response at historical and 3x
-  dr_hist <- dose_response[dose_response$m_ex == 0.004, ]
-  dr_3x <- dose_response[dose_response$m_ex == 0.012, ]
+  # Dose-response at historical and 3x (handle list or data.frame)
+  dr_df <- if (is.data.frame(dose_response)) dose_response else dose_response$summary
+  dr_hist <- dr_df[dr_df$m_ex == 0.004, ]
+  dr_3x <- dr_df[dr_df$m_ex == 0.012, ]
 
   c(list(
     # --- Oracle ---

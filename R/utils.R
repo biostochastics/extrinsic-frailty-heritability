@@ -360,15 +360,23 @@ run_dose_response <- function(sigma_theta_true, oracle, params,
                   0.001, 0.0015, 0.002, 0.003, 0.004, 0.005,
                   0.006, 0.008, 0.012)
 
-  results <- lapply(seq_along(m_ex_grid), function(i) {
+  summary_rows <- list()
+  per_seed_rows <- list()
+
+  for (i in seq_along(m_ex_grid)) {
     mx <- m_ex_grid[i]
 
     if (mx == 0) {
-      return(data.frame(
+      summary_rows[[i]] <- data.frame(
         m_ex = 0, bias_pp = 0, se_pp = 0,
         lo95_pp = 0, hi95_pp = 0,
         stringsAsFactors = FALSE
-      ))
+      )
+      per_seed_rows[[i]] <- data.frame(
+        m_ex = 0, rep = seq_len(n_reps), bias_pp = 0,
+        stringsAsFactors = FALSE
+      )
+      next
     }
 
     seed_base <- params$MASTER_SEED + 70000L + i * 100L
@@ -387,7 +395,7 @@ run_dose_response <- function(sigma_theta_true, oracle, params,
 
     m <- mean(rep_biases); se <- sd(rep_biases) / sqrt(n_reps)
     t_crit <- qt(0.975, df = n_reps - 1)
-    data.frame(
+    summary_rows[[i]] <- data.frame(
       m_ex = mx,
       bias_pp = m,
       se_pp = se,
@@ -395,9 +403,16 @@ run_dose_response <- function(sigma_theta_true, oracle, params,
       hi95_pp = m + t_crit * se,
       stringsAsFactors = FALSE
     )
-  })
+    per_seed_rows[[i]] <- data.frame(
+      m_ex = mx, rep = seq_len(n_reps), bias_pp = rep_biases,
+      stringsAsFactors = FALSE
+    )
+  }
 
-  do.call(rbind, results)
+  list(
+    summary = do.call(rbind, summary_rows),
+    per_seed = do.call(rbind, per_seed_rows)
+  )
 }
 
 #' Pleiotropy isolation control (rho=0, heritable gamma)
