@@ -87,20 +87,20 @@ write_scalars <- function(scalars, outdir = "tables") {
 #' Build the main summary table from simulation results
 #'
 #' @param oracle Oracle simulation result (list)
-#' @param arm1 Arm 1 result
-#' @param arm2 Arm 2 result
-#' @param ctrl_a Control A result
-#' @param ctrl_b Control B result
-#' @param arm3 Arm 3 (Hamilton) result
+#' @param arm1 Baseline result
+#' @param arm2 Misspecified result
+#' @param ctrl_a Control: nonfamilial result
+#' @param ctrl_b Control: vanishing result
+#' @param arm3 Comparator (Hamilton) result
 #' @param sigma_theta_true True sigma_theta
-#' @param sigma_theta_arm1 Calibrated sigma for arm 1
-#' @param sigma_theta_arm2 Calibrated sigma for arm 2
-#' @param sigma_theta_ctrl_a Calibrated sigma for control A
-#' @param sigma_theta_ctrl_b Calibrated sigma for control B
-#' @param oracle_fix Oracle fix arm result
-#' @param pleiotropy_isolation Pleiotropy isolation result
-#' @param irrelevant_trait Irrelevant trait result
-#' @param robustness_cutoff0 Cutoff=0 result
+#' @param sigma_theta_arm1 Calibrated sigma for Baseline
+#' @param sigma_theta_arm2 Calibrated sigma for Misspecified
+#' @param sigma_theta_ctrl_a Calibrated sigma for Control: nonfamilial
+#' @param sigma_theta_ctrl_b Calibrated sigma for Control: vanishing
+#' @param oracle_fix Recovery (two-component refit) result
+#' @param pleiotropy_isolation Check: pleiotropy only result
+#' @param irrelevant_trait Control: irrelevant trait result
+#' @param robustness_cutoff0 Check: no survivor cutoff result
 #' @return Data frame
 build_summary_table <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
                                 sigma_theta_true,
@@ -111,11 +111,11 @@ build_summary_table <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
                                 irrelevant_trait = NULL,
                                 robustness_cutoff0 = NULL) {
   conditions <- c(
-    "Oracle (intrinsic only)",
-    "Arm 1: Correctly specified",
-    "Arm 2: Misspecification",
-    "Control A: Non-heritable extrinsic",
-    "Control B: Vanishing m_ex"
+    "Oracle",
+    "Baseline: correctly specified",
+    "Misspecified: omitted familial extrinsic",
+    "Control: nonfamilial extrinsic",
+    "Control: vanishing extrinsic"
   )
   sigma_vals <- c(
     sigma_theta_true, sigma_theta_arm1, sigma_theta_arm2,
@@ -128,40 +128,40 @@ build_summary_table <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
                  ctrl_a$h2 - oracle$h2,
                  ctrl_b$h2 - oracle$h2)
 
-  # Pleiotropy isolation
+  # Check: pleiotropy only
   if (!is.null(pleiotropy_isolation)) {
-    conditions <- c(conditions, "Pleiotropy isolation (rho=0)")
+    conditions <- c(conditions, "Check: pleiotropy only")
     sigma_vals <- c(sigma_vals, pleiotropy_isolation$sigma_fit)
     h2_vals <- c(h2_vals, pleiotropy_isolation$h2_corrected)
     bias_vals <- c(bias_vals, pleiotropy_isolation$bias)
   }
 
-  # Irrelevant trait
+  # Control: irrelevant trait
   if (!is.null(irrelevant_trait)) {
-    conditions <- c(conditions, "Irrelevant trait (zeta)")
+    conditions <- c(conditions, "Control: irrelevant trait")
     sigma_vals <- c(sigma_vals, irrelevant_trait$sigma_fit)
     h2_vals <- c(h2_vals, irrelevant_trait$h2_corrected)
     bias_vals <- c(bias_vals, irrelevant_trait$bias)
   }
 
-  # Oracle fix — bias relative to the GLOBAL oracle (h2_vals[1]), not local
+  # Recovery — bias relative to the GLOBAL oracle (h2_vals[1]), not local
   if (!is.null(oracle_fix)) {
-    conditions <- c(conditions, "Oracle fix: correct model")
+    conditions <- c(conditions, "Recovery: two-component refit")
     sigma_vals <- c(sigma_vals, oracle_fix$sigma_theta_fix)
     h2_vals <- c(h2_vals, oracle_fix$fix_h2)
     bias_vals <- c(bias_vals, oracle_fix$fix_h2 - h2_vals[1])
   }
 
-  # Cutoff = 0
+  # Check: no survivor cutoff
   if (!is.null(robustness_cutoff0)) {
-    conditions <- c(conditions, "Cutoff = 0")
+    conditions <- c(conditions, "Check: no survivor cutoff")
     sigma_vals <- c(sigma_vals, robustness_cutoff0$sigma_fit)
     h2_vals <- c(h2_vals, robustness_cutoff0$corr_h2)
     bias_vals <- c(bias_vals, robustness_cutoff0$bias_pp / 100)
   }
 
-  # Arm 3 always last
-  conditions <- c(conditions, "Arm 3: Hamilton conditioning")
+  # Comparator always last
+  conditions <- c(conditions, "Comparator: Hamilton")
   sigma_vals <- c(sigma_vals, NA)
   h2_vals <- c(h2_vals, arm3$h2)
   bias_vals <- c(bias_vals, arm3$h2 - oracle$h2)
@@ -176,16 +176,16 @@ build_summary_table <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
 
   # Canonical presentation order (matches Results prose)
   canonical <- c(
-    "Oracle (intrinsic only)",
-    "Arm 1: Correctly specified",
-    "Arm 2: Misspecification",
-    "Control A: Non-heritable extrinsic",
-    "Irrelevant trait (zeta)",
-    "Control B: Vanishing m_ex",
-    "Pleiotropy isolation (rho=0)",
-    "Oracle fix: correct model",
-    "Cutoff = 0",
-    "Arm 3: Hamilton conditioning"
+    "Oracle",
+    "Baseline: correctly specified",
+    "Misspecified: omitted familial extrinsic",
+    "Recovery: two-component refit",
+    "Check: no survivor cutoff",
+    "Check: pleiotropy only",
+    "Control: nonfamilial extrinsic",
+    "Control: irrelevant trait",
+    "Control: vanishing extrinsic",
+    "Comparator: Hamilton"
   )
   ord <- match(df$Condition, canonical)
   df <- df[order(ord), ]
@@ -196,8 +196,8 @@ build_summary_table <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
 #' Build the model validation table
 #'
 #' @param oracle_gm GM oracle result
-#' @param arm1_gm GM Arm 1 corrected result
-#' @param arm2_gm GM Arm 2 corrected result
+#' @param arm1_gm GM Baseline corrected result
+#' @param arm2_gm GM Misspecified corrected result
 #' @param mgg_result MGG model analysis result (list with oracle_h2, arm1_h2, etc.)
 #' @param sr_result SR model analysis result
 #' @return Data frame
@@ -208,12 +208,12 @@ build_model_table <- function(oracle_gm, arm1_gm, arm2_gm,
   data.frame(
     Model = c("Gompertz-Makeham", "MGG (Shenhar)", "SR (Shenhar)"),
     Oracle_h2 = c(oracle_gm$h2, mgg_result$oracle_h2, sr_result$oracle_h2),
-    Arm1_h2 = c(arm1_gm$h2, mgg_result$arm1_h2, sr_result$arm1_h2),
-    Arm1_bias_pp = c(round(100 * gm_arm1_bias, 1),
+    Baseline_h2 = c(arm1_gm$h2, mgg_result$arm1_h2, sr_result$arm1_h2),
+    Baseline_bias_pp = c(round(100 * gm_arm1_bias, 1),
                      round(100 * mgg_result$arm1_bias, 1),
                      round(100 * sr_result$arm1_bias, 1)),
-    Arm2_h2 = c(arm2_gm$h2, mgg_result$arm2_h2, sr_result$arm2_h2),
-    Arm2_bias_pp = c(round(100 * gm_arm2_bias, 1),
+    Misspec_h2 = c(arm2_gm$h2, mgg_result$arm2_h2, sr_result$arm2_h2),
+    Misspec_bias_pp = c(round(100 * gm_arm2_bias, 1),
                      round(100 * mgg_result$arm2_bias, 1),
                      round(100 * sr_result$arm2_bias, 1)),
     stringsAsFactors = FALSE
@@ -244,7 +244,12 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
                             extended_sigma_gamma = NULL,
                             mc_uncertainty = NULL,
                             mc_uncertainty_multimodel = NULL,
-                            mex_split_hires = NULL) {
+                            mex_split_hires = NULL,
+                            bivariate_check = NULL,
+                            mz_concordance = NULL,
+                            mz_concordance_decoupled = NULL,
+                            bridge_uncertainty = NULL,
+                            main_arms_replicated = NULL) {
 
   arm2_bias <- arm2$h2 - oracle$h2
   arm1_bias <- arm1$h2 - oracle$h2
@@ -273,12 +278,12 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     oracle_r_mz = round(oracle$r_mz, 3),
     oracle_r_dz = round(oracle$r_dz, 3),
 
-    # --- Arm 1 ---
+    # --- Baseline ---
     arm1_h2 = round(arm1$h2, 3),
     arm1_bias_pp = round(100 * arm1_bias, 1),
     sigma_theta_arm1 = round(sigma_theta_arm1, 3),
 
-    # --- Arm 2 ---
+    # --- Misspecified ---
     arm2_h2 = round(arm2$h2, 3),
     arm2_r_mz = round(arm2$r_mz, 3),
     arm2_bias = round(arm2_bias, 3),
@@ -288,17 +293,17 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     sigma_theta_fit = round(sigma_theta_fit, 3),
     sigma_infl_pct = round(100 * (sigma_theta_fit / sigma_theta_true - 1), 1),
 
-    # --- Control A ---
+    # --- Control: nonfamilial ---
     ctrl_a_h2 = round(ctrl_a$h2, 3),
     ctrl_a_bias_pp = round(100 * (ctrl_a$h2 - oracle$h2), 1),
     sigma_theta_ctrl_a = round(sigma_theta_ctrl_a, 3),
 
-    # --- Control B ---
+    # --- Control: vanishing ---
     ctrl_b_h2 = round(ctrl_b$h2, 3),
     ctrl_b_bias_pp = round(100 * (ctrl_b$h2 - oracle$h2), 1),
     sigma_theta_ctrl_b = round(sigma_theta_ctrl_b, 3),
 
-    # --- Arm 3 (Hamilton) ---
+    # --- Comparator (Hamilton) ---
     arm3_h2 = round(arm3$h2, 3),
     arm3_bias_pp = round(100 * (arm3$h2 - oracle$h2), 1),
 
@@ -319,30 +324,34 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     anchored_mean_pp = round(100 * mean(anch_biases), 0),
     anchored_point_pp = round(100 * anch_point$bias[1], 1),
 
-    # --- Cutoff=0 robustness ---
+    # --- Check: no survivor cutoff (20-seed replicated) ---
     cutoff0_bias_pp = round(robustness_cutoff0$bias_pp, 1),
+    cutoff0_se_pp = round(robustness_cutoff0$se_pp, 2),
+    cutoff0_lo95_pp = round(robustness_cutoff0$lo95_pp, 1),
+    cutoff0_hi95_pp = round(robustness_cutoff0$hi95_pp, 1),
     cutoff0_sigma_fit = round(robustness_cutoff0$sigma_fit, 3),
     cutoff0_h2 = round(robustness_cutoff0$corr_h2, 3),
 
     # --- Dose-response ---
-    dose_hist_bias_pp = round(100 * dr_hist$bias[1], 1),
-    dose_3x_bias_pp = round(100 * dr_3x$bias[1], 1),
+    dose_hist_bias_pp = round(dr_hist$bias_pp[1], 1),
+    dose_3x_bias_pp = round(dr_3x$bias_pp[1], 1),
 
-    # --- Pleiotropy isolation ---
+    # --- Check: pleiotropy only ---
     pleiotropy_iso_h2 = round(pleiotropy_isolation$h2_corrected, 3),
     pleiotropy_iso_sigma_fit = round(pleiotropy_isolation$sigma_fit, 3),
     pleiotropy_iso_bias_pp = round(pleiotropy_isolation$bias_pp, 1),
     pleiotropy_iso_sigma_infl_pct = round(
       100 * (pleiotropy_isolation$sigma_fit / sigma_theta_true - 1), 1),
 
-    # --- Irrelevant trait ---
+    # --- Control: irrelevant trait ---
     irrel_h2 = round(irrelevant_trait$h2_corrected, 3),
     irrel_sigma_fit = round(irrelevant_trait$sigma_fit, 3),
     irrel_bias_pp = round(irrelevant_trait$bias_pp, 1),
 
-    # --- Dose-response large m_ex ---
-    dose_3x_h2 = round(dr_3x$h2_corrected[1], 3),
-    dose_3x_sigma_fit = round(dr_3x$sigma_fit[1], 3),
+    # --- Dose-response 3x (with uncertainty) ---
+    dose_3x_se_pp = round(dr_3x$se_pp[1], 2),
+    dose_3x_lo95_pp = round(dr_3x$lo95_pp[1], 1),
+    dose_3x_hi95_pp = round(dr_3x$hi95_pp[1], 1),
 
     # --- Model validation (MGG) ---
     mgg_oracle_h2 = round(mgg_validation$oracle_h2, 3),
@@ -370,7 +379,7 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     mex_split_50pct_pp = round(mex_split$bias_pp[mex_split$frac_heritable == 0.5], 1),
     mex_split_100pct_pp = round(mex_split$bias_pp[mex_split$frac_heritable == 1.0], 1),
 
-    # --- Oracle fix arm (bias relative to global oracle, not local) ---
+    # --- Recovery (two-component refit) arm (bias relative to global oracle, not local) ---
     fix_sigma_theta = round(oracle_fix$sigma_theta_fix, 4),
     fix_sigma_recovery_pct = round(oracle_fix$sigma_recovery_pct, 1),
     fix_h2 = round(oracle_fix$fix_h2, 3),
@@ -434,6 +443,7 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
       b1_min_pp = round(min(b1_agg$bias_pp), 1),
       b1_max_pp = round(max(b1_agg$bias_pp), 1),
       b1_spread_pp = round(diff(range(b1_agg$bias_pp)), 1),
+      b1_mean_pp = round(mean(b1_agg$bias_pp), 1),
       b1_n_reps = max(alt_ext_forms$rep)
     )
   },
@@ -450,13 +460,16 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     bridge_m <- b2_agg$bias_pp[abs(b2_agg$sigma_gamma - 1.47) < 0.01]
     bridge_se <- b2_se$bias_pp[abs(b2_se$sigma_gamma - 1.47) < 0.01]
     bridge_sinfl <- b2_sinfl$sigma_infl_pct[abs(b2_sinfl$sigma_gamma - 1.47) < 0.01]
+    b2_nreps <- max(extended_sigma_gamma$rep)
+    b2_t_crit <- qt(0.975, df = b2_nreps - 1)
     list(
       b2_sg070_pp = round(sg070_m, 1),
       b2_sg100_pp = round(sg100_m, 1),
       b2_bridge_pp = round(bridge_m, 1),
       b2_bridge_se_pp = round(bridge_se, 2),
+      b2_bridge_ci_half = round(b2_t_crit * bridge_se, 1),
       b2_bridge_sigma_infl = round(bridge_sinfl, 1),
-      b2_n_reps = max(extended_sigma_gamma$rep)
+      b2_n_reps = b2_nreps
     )
   },
 
@@ -470,8 +483,8 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
       b3_n_seeds = nrow(seeds),
       b3_arm2_mean_pp = round(m, 2),
       b3_arm2_se = round(se, 2),
-      b3_arm2_ci_lo = round(m - 1.96 * se, 1),
-      b3_arm2_ci_hi = round(m + 1.96 * se, 1),
+      b3_arm2_ci_lo = round(m - qt(0.975, df = nrow(seeds) - 1) * se, 1),
+      b3_arm2_ci_hi = round(m + qt(0.975, df = nrow(seeds) - 1) * se, 1),
       b3_oracle_mean = round(s$mean[s$statistic == "oracle_h2"], 3),
       b3_oracle_sd = round(s$sd[s$statistic == "oracle_h2"], 3),
       b3_arm1_mean_pp = round(s$mean[s$statistic == "arm1_bias_pp"], 2),
@@ -486,15 +499,29 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
     mm_mgg <- mm[mm$model == "MGG", ]
     mm_sr <- mm[mm$model == "SR", ]
     list(
+      b3b_n_seeds = mm_gm$n_seeds,
       b3b_gm_arm2_mean_pp = round(mm_gm$arm2_bias_mean, 1),
       b3b_gm_arm2_se_pp = round(mm_gm$arm2_bias_se, 2),
       b3b_gm_arm1_mean_pp = round(mm_gm$arm1_bias_mean, 1),
+      b3b_gm_arm1_se_pp = round(mm_gm$arm1_bias_se, 2),
+      b3b_gm_oracle_h2 = round(mm_gm$oracle_h2_mean, 3),
       b3b_mgg_arm2_mean_pp = round(mm_mgg$arm2_bias_mean, 1),
       b3b_mgg_arm2_se_pp = round(mm_mgg$arm2_bias_se, 2),
       b3b_mgg_arm1_mean_pp = round(mm_mgg$arm1_bias_mean, 1),
+      b3b_mgg_arm1_se_pp = round(mm_mgg$arm1_bias_se, 2),
+      b3b_mgg_oracle_h2 = round(mm_mgg$oracle_h2_mean, 3),
       b3b_sr_arm2_mean_pp = round(mm_sr$arm2_bias_mean, 1),
       b3b_sr_arm2_se_pp = round(mm_sr$arm2_bias_se, 2),
-      b3b_sr_arm1_mean_pp = round(mm_sr$arm1_bias_mean, 1)
+      b3b_sr_arm1_mean_pp = round(mm_sr$arm1_bias_mean, 1),
+      b3b_sr_arm1_se_pp = round(mm_sr$arm1_bias_se, 2),
+      b3b_sr_oracle_h2 = round(mm_sr$oracle_h2_mean, 3),
+      b3b_min_lo95_pp = {
+        t_crit <- qt(0.975, df = mm_gm$n_seeds - 1)
+        lo <- c(mm_gm$arm2_bias_mean - t_crit * mm_gm$arm2_bias_se,
+                mm_mgg$arm2_bias_mean - t_crit * mm_mgg$arm2_bias_se,
+                mm_sr$arm2_bias_mean - t_crit * mm_sr$arm2_bias_se)
+        round(min(lo), 1)
+      }
     )
   },
 
@@ -508,6 +535,122 @@ collect_scalars <- function(oracle, arm1, arm2, ctrl_a, ctrl_b, arm3,
       b4_frac50_pp = round(agg$bias_pp[agg$frac_heritable == 0.5], 1),
       b4_frac100_pp = round(agg$bias_pp[agg$frac_heritable == 1.0], 1)
     )
+  },
+
+  # --- B5: Bivariate survival model check ---
+  if (!is.null(bivariate_check)) list(
+    biv_iae_misspec_mz = round(bivariate_check$iae_misspec_mz, 4),
+    biv_iae_misspec_dz = round(bivariate_check$iae_misspec_dz, 4),
+    biv_iae_fix_mz = round(bivariate_check$iae_fix_mz, 4),
+    biv_iae_fix_dz = round(bivariate_check$iae_fix_dz, 4),
+    biv_iae_ratio_mz = round(
+      bivariate_check$iae_misspec_mz / max(bivariate_check$iae_fix_mz, 1e-10), 1),
+    biv_peak_dev_age_mz = bivariate_check$peak_dev_age_mz,
+    biv_peak_dev_age_dz = bivariate_check$peak_dev_age_dz,
+    biv_n_mz = bivariate_check$n_mz_true,
+    biv_n_dz = bivariate_check$n_dz_true
+  ),
+
+  # --- B6: MZ extrinsic concordance sensitivity ---
+  if (!is.null(mz_concordance)) {
+    d <- mz_concordance[order(mz_concordance$r_gamma_mz), ]
+    # Zero crossing via first sign change in ordered data
+    diffs <- diff(sign(d$bias_pp))
+    sign_changes <- which(diffs != 0)
+    zero_cross <- if (length(sign_changes) > 0) {
+      i <- sign_changes[1]
+      w <- (0 - d$bias_pp[i]) / (d$bias_pp[i + 1] - d$bias_pp[i])
+      d$r_gamma_mz[i] + w * (d$r_gamma_mz[i + 1] - d$r_gamma_mz[i])
+    } else NA_real_
+    # Interpolated bias at selected concordance levels
+    get_bias <- function(r) {
+      tryCatch(
+        approx(d$r_gamma_mz, d$bias_pp, xout = r)$y,
+        error = function(e) NA_real_
+      )
+    }
+    list(
+      conc_bias_pp_00 = round(get_bias(0.0), 1),
+      conc_bias_pp_05 = round(get_bias(0.5), 1),
+      conc_bias_pp_07 = round(get_bias(0.7), 1),
+      conc_bias_pp_085 = round(get_bias(0.85), 1),
+      conc_bias_pp_10 = round(get_bias(1.0), 1),
+      conc_zero_crossing = if (is.na(zero_cross)) "none" else round(zero_cross, 2)
+    )
+  },
+
+  # --- B6b: Decoupled concordance sweep (rho=0) ---
+  if (!is.null(mz_concordance_decoupled)) {
+    dd <- mz_concordance_decoupled[order(mz_concordance_decoupled$r_gamma_mz), ]
+    get_bias_d <- function(r) {
+      tryCatch(
+        approx(dd$r_gamma_mz, dd$bias_pp, xout = r)$y,
+        error = function(e) NA_real_
+      )
+    }
+    list(
+      conc_rho0_bias_pp_00 = round(get_bias_d(0.0), 1),
+      conc_rho0_bias_pp_05 = round(get_bias_d(0.5), 1),
+      conc_rho0_bias_pp_07 = round(get_bias_d(0.7), 1),
+      conc_rho0_bias_pp_085 = round(get_bias_d(0.85), 1),
+      conc_rho0_bias_pp_10 = round(get_bias_d(1.0), 1)
+    )
+  },
+
+  # --- B7: Bridge uncertainty ---
+  if (!is.null(bridge_uncertainty)) {
+    s <- bridge_uncertainty$summary
+    central_se <- s$bridge_se[s$target_label == "central"]
+    central_n <- s$n_valid[s$target_label == "central"]
+    central_t <- if (!is.na(central_n) && central_n > 1) qt(0.975, df = central_n - 1) else NA_real_
+    list(
+      bridge_unc_central_mean = round(s$bridge_mean[s$target_label == "central"], 2),
+      bridge_unc_central_se = round(central_se, 2),
+      bridge_unc_central_ci_half = if (!is.na(central_t)) round(central_t * central_se, 2) else NA_real_,
+      bridge_unc_lower_mean = round(s$bridge_mean[s$target_label == "lower"], 2),
+      bridge_unc_upper_mean = if (is.na(s$bridge_mean[s$target_label == "upper"])) "NA" else round(s$bridge_mean[s$target_label == "upper"], 2),
+      bridge_all_above_065 = all(s$all_above_065, na.rm = TRUE)
+    )
+  },
+
+  # --- B8: Replicated main arms (50-seed canonical numbers) ---
+  if (!is.null(main_arms_replicated)) {
+    s <- main_arms_replicated$summary
+    get_row <- function(metric) {
+      row <- s[s$metric == metric, ]
+      if (nrow(row) == 0) return(list(mean = NA, se = NA, lo95 = NA, hi95 = NA))
+      list(mean = row$mean[1], se = row$se[1], lo95 = row$lo95[1], hi95 = row$hi95[1])
+    }
+    scalars <- list()
+    for (arm in c("arm1", "arm2", "ctrl_a", "ctrl_b", "fix")) {
+      r <- get_row(paste0(arm, "_bias_pp"))
+      scalars[[paste0("rep_", arm, "_bias_pp")]] <- round(r$mean, 1)
+      scalars[[paste0("rep_", arm, "_se_pp")]] <- round(r$se, 2)
+      scalars[[paste0("rep_", arm, "_lo95_pp")]] <- round(r$lo95, 1)
+      scalars[[paste0("rep_", arm, "_hi95_pp")]] <- round(r$hi95, 1)
+    }
+    # Replicated oracle and arm2 h²
+    ora <- get_row("oracle_h2")
+    a2 <- get_row("arm2_h2")
+    scalars$rep_oracle_h2 <- sprintf("%.3f", ora$mean)
+    scalars$rep_arm2_h2 <- sprintf("%.3f", a2$mean)
+    # Sigma inflation
+    si <- get_row("arm2_sigma_infl")
+    scalars$rep_arm2_sigma_infl <- round(si$mean, 1)
+    # Pleiotropy isolation (replicated)
+    for (arm in c("pleio_iso", "irrel", "arm3")) {
+      r <- get_row(paste0(arm, "_bias_pp"))
+      scalars[[paste0("rep_", arm, "_bias_pp")]] <- round(r$mean, 1)
+      scalars[[paste0("rep_", arm, "_se_pp")]] <- round(r$se, 2)
+      scalars[[paste0("rep_", arm, "_lo95_pp")]] <- round(r$lo95, 1)
+      scalars[[paste0("rep_", arm, "_hi95_pp")]] <- round(r$hi95, 1)
+    }
+    # Replicated h2 values for all arms
+    for (arm in c("pleio_iso", "irrel", "arm3")) {
+      rr <- get_row(paste0(arm, "_h2"))
+      scalars[[paste0("rep_", arm, "_h2")]] <- sprintf("%.3f", rr$mean)
+    }
+    scalars
   }
   )
 }

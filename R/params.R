@@ -53,6 +53,10 @@ PARAMS <- list(
   HAM_EXT_SHIFT = 0.70,
   HAM_TARGET_H2 = 0.45,
 
+  # --- MC replication counts ---
+  N_REPS_MAIN = 50L,     # main arms replication (50 seeds)
+  N_REPS_SWEEP = 20L,    # sensitivity sweep replication (20 seeds/point)
+
   # --- Inner parallelism cap (for mclapply inside {crew} workers) ---
   # SR sweeps use mclapply for grid points; cap to avoid oversubscription
   # with {crew}'s 10 workers. 4 cores × ~2 concurrent SR targets = 8, safe on 14.

@@ -2,6 +2,32 @@
 # utils.R — Shared utilities: grid builders, arm runners, Hamilton sim
 # ===========================================================================
 
+#' Run a function over multiple independent seeds and summarize
+#'
+#' Wraps any single-seed simulation cycle in an MC outer loop.
+#' Returns mean, SE, and 95% CI for a numeric result vector.
+#'
+#' @param fn Function that takes `rng_seed` and returns a named numeric vector
+#' @param n_reps Number of independent replications
+#' @param seed_base Base seed (each rep uses seed_base + rep * 7L)
+#' @return List with mean, se, lo95, hi95 (named vectors), and raw matrix
+replicate_arm <- function(fn, n_reps, seed_base) {
+  raw <- lapply(seq_len(n_reps), function(rep) {
+    seed <- seed_base + rep * 7L
+    fn(rng_seed = seed)
+  })
+  mat <- do.call(rbind, raw)
+  means <- colMeans(mat)
+  ses <- apply(mat, 2, sd) / sqrt(n_reps)
+  list(
+    mean = means,
+    se = ses,
+    lo95 = means - qt(0.975, df = n_reps - 1) * ses,
+    hi95 = means + qt(0.975, df = n_reps - 1) * ses,
+    raw = mat
+  )
+}
+
 #' Build the main sensitivity sweep grid
 #' @return Data frame with rho_val, sigma_gamma_val columns (for tar_map)
 make_sweep_grid <- function() {
@@ -59,32 +85,66 @@ run_sweep_cell <- function(sigma_theta_true, rho_val, sigma_gamma_val,
   )
 }
 
-#' Run cutoff=0 robustness check
+#' Run cutoff=0 robustness check (20-seed MC replication)
 #'
 #' @param sigma_theta_true True sigma_theta
 #' @param params Parameter list
-#' @return List with oracle_nc, corr_nc, bias_nc
-run_cutoff0_robustness <- function(sigma_theta_true, params) {
-  oracle_nc <- sim_twin_h2(sigma_theta_true, 0, sigma_gamma = 0,
-    cutoff = 0, rng_seed = params$MASTER_SEED + 9000L)
+#' @param n_seeds Number of independent seeds
+#' @return List with replicated mean/SE/CI (backward-compatible field names)
+run_cutoff0_robustness <- function(sigma_theta_true, params, n_seeds = 20L) {
+  seed_base <- params$MASTER_SEED + 9000L
 
-  true_obs_nc <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
-    sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
-    gamma_heritable = TRUE, individual_ext = TRUE,
-    cutoff = 0, rng_seed = params$MASTER_SEED + 9100L)
+  results <- lapply(seq_len(n_seeds), function(s) {
+    sb <- seed_base + s * 10000L
 
-  sigma_fit_nc <- calibrate_sigma_theta_crn(true_obs_nc$r_mz, params$M_EX_HIST,
-    crn_seed = params$MASTER_SEED + 9150L)
+    oracle_nc <- sim_twin_h2(sigma_theta_true, 0, sigma_gamma = 0,
+      cutoff = 0, rng_seed = sb)
 
-  corr_nc <- sim_twin_h2(sigma_fit_nc, 0, sigma_gamma = 0,
-    cutoff = 0, rng_seed = params$MASTER_SEED + 9200L)
+    true_obs_nc <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+      sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+      gamma_heritable = TRUE, individual_ext = TRUE,
+      cutoff = 0, rng_seed = sb + 100L)
+
+    sigma_fit_nc <- calibrate_sigma_theta_crn(true_obs_nc$r_mz, params$M_EX_HIST,
+      crn_seed = sb + 150L)
+
+    corr_nc <- sim_twin_h2(sigma_fit_nc, 0, sigma_gamma = 0,
+      cutoff = 0, rng_seed = sb + 200L)
+
+    data.frame(
+      seed = s,
+      oracle_h2 = oracle_nc$h2,
+      corr_h2 = corr_nc$h2,
+      bias_pp = 100 * (corr_nc$h2 - oracle_nc$h2),
+      sigma_fit = sigma_fit_nc,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  df <- do.call(rbind, results)
+  m <- mean(df$bias_pp); se <- sd(df$bias_pp) / sqrt(nrow(df))
+
+  # Use t-distribution for proper CI with n=20
+  t_crit <- qt(0.975, df = nrow(df) - 1)
+
+  # SE of corrected h2 (for error bars on the h2 bar itself)
+  h2_se <- sd(df$corr_h2) / sqrt(nrow(df))
+  h2_mean <- mean(df$corr_h2)
 
   list(
-    oracle_h2 = oracle_nc$h2,
-    corr_h2 = corr_nc$h2,
-    bias = corr_nc$h2 - oracle_nc$h2,
-    bias_pp = 100 * (corr_nc$h2 - oracle_nc$h2),
-    sigma_fit = sigma_fit_nc
+    per_seed = df,
+    n_seeds = n_seeds,
+    oracle_h2 = mean(df$oracle_h2),
+    corr_h2 = h2_mean,
+    corr_h2_se = h2_se,
+    corr_h2_lo95 = h2_mean - t_crit * h2_se,
+    corr_h2_hi95 = h2_mean + t_crit * h2_se,
+    bias = mean(df$bias_pp) / 100,
+    bias_pp = m,
+    se_pp = se,
+    lo95_pp = m - t_crit * se,
+    hi95_pp = m + t_crit * se,
+    sigma_fit = mean(df$sigma_fit)
   )
 }
 
@@ -294,7 +354,8 @@ run_model_analysis <- function(model_name, params) {
 #' @param oracle Oracle simulation result
 #' @param params Parameter list
 #' @return Data frame with m_ex, sigma_fit, h2_corrected, bias, sigma_infl_pct
-run_dose_response <- function(sigma_theta_true, oracle, params) {
+run_dose_response <- function(sigma_theta_true, oracle, params,
+                               n_reps = params$N_REPS_SWEEP) {
   m_ex_grid <- c(0, 0.00005, 0.0001, 0.0003, 0.0005, 0.0008,
                   0.001, 0.0015, 0.002, 0.003, 0.004, 0.005,
                   0.006, 0.008, 0.012)
@@ -304,31 +365,34 @@ run_dose_response <- function(sigma_theta_true, oracle, params) {
 
     if (mx == 0) {
       return(data.frame(
-        m_ex = 0, sigma_fit = sigma_theta_true,
-        h2_corrected = oracle$h2, bias = 0, sigma_infl_pct = 0,
+        m_ex = 0, bias_pp = 0, se_pp = 0,
+        lo95_pp = 0, hi95_pp = 0,
         stringsAsFactors = FALSE
       ))
     }
 
     seed_base <- params$MASTER_SEED + 70000L + i * 100L
 
-    obs_i <- sim_twin_h2(sigma_theta_true, mx,
-      sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
-      gamma_heritable = TRUE, individual_ext = TRUE,
-      rng_seed = seed_base
-    )
+    rep_biases <- vapply(seq_len(n_reps), function(r) {
+      sb <- seed_base + r * 100000L
+      obs_i <- sim_twin_h2(sigma_theta_true, mx,
+        sigma_gamma = params$SIGMA_GAMMA_DEF, rho = params$RHO_DEF,
+        gamma_heritable = TRUE, individual_ext = TRUE,
+        rng_seed = sb)
+      sf <- calibrate_sigma_theta(obs_i$r_mz, mx)
+      corr_i <- sim_twin_h2(sf, 0, sigma_gamma = 0,
+        rng_seed = sb + 5000L)
+      100 * (corr_i$h2 - oracle$h2)
+    }, numeric(1))
 
-    sf <- calibrate_sigma_theta(obs_i$r_mz, mx)
-    corr_i <- sim_twin_h2(sf, 0, sigma_gamma = 0,
-      rng_seed = seed_base + 5000L
-    )
-
+    m <- mean(rep_biases); se <- sd(rep_biases) / sqrt(n_reps)
+    t_crit <- qt(0.975, df = n_reps - 1)
     data.frame(
       m_ex = mx,
-      sigma_fit = sf,
-      h2_corrected = corr_i$h2,
-      bias = corr_i$h2 - oracle$h2,
-      sigma_infl_pct = 100 * (sf / sigma_theta_true - 1),
+      bias_pp = m,
+      se_pp = se,
+      lo95_pp = m - t_crit * se,
+      hi95_pp = m + t_crit * se,
       stringsAsFactors = FALSE
     )
   })
@@ -438,7 +502,8 @@ run_irrelevant_trait <- function(sigma_theta_true, oracle, params) {
 #' @param sweep_type "negative_rho", "pleiotropy_isolation", or "dose_response"
 #' @param params Parameter list
 #' @return Data frame with sweep results
-run_model_control_sweep <- function(model_name, sweep_type, params) {
+run_model_control_sweep <- function(model_name, sweep_type, params,
+                                    n_reps = params$N_REPS_SWEEP) {
   if (model_name == "mgg") {
     sim_fn <- sim_twin_h2_mgg
     true_disp <- params$MGG_CV_Q
@@ -491,6 +556,9 @@ run_model_control_sweep <- function(model_name, sweep_type, params) {
     stop("Unknown sweep_type: ", sweep_type)
   }
 
+  # Pre-compile SR Rcpp before forking workers (avoids parallel build race)
+  if (model_name == "sr") .ensure_sr_cpp()
+
   # Use parallel::mclapply for SR (Euler-Maruyama is expensive per grid point)
   # Cap at INNER_MC_CORES to avoid oversubscription under {crew} workers
   mc_cores <- if (model_name == "sr" && nrow(grid) > 1) {
@@ -504,48 +572,60 @@ run_model_control_sweep <- function(model_name, sweep_type, params) {
     rho_i <- grid$rho_val[i]
     m_ex_i <- grid$m_ex_val[i]
     sg_i <- grid$sg_val[i]
-    seed_i <- seed_base + 1000L * i
+    sweep_val <- if (sweep_type == "dose_response") m_ex_i else rho_i
 
     # If m_ex = 0, bias is 0 by definition
     if (m_ex_i == 0) {
       return(data.frame(
         model = model_name, sweep_type = sweep_type,
-        sweep_val = if (sweep_type == "dose_response") m_ex_i else rho_i,
+        sweep_val = sweep_val,
         oracle_h2 = oracle$h2, extrap_h2 = oracle$h2,
-        bias = 0, bias_pp = 0,
+        bias = 0, bias_pp = 0, se_pp = 0,
+        lo95_pp = 0, hi95_pp = 0,
         stringsAsFactors = FALSE
       ))
     }
 
-    # 1. Simulate observed
-    obs_args <- list(
-      m_ex = m_ex_i, sigma_gamma = sg_i, rho = rho_i,
-      individual_ext = TRUE,
-      n_pairs = n_pairs_eff, rng_seed = seed_i
-    )
-    obs_args[[disp_name]] <- true_disp
-    obs <- do.call(sim_fn, obs_args)
+    # Run n_reps independent seeds per grid point
+    rep_biases <- vapply(seq_len(n_reps), function(r) {
+      seed_i <- seed_base + 1000L * i + r * 100000L
 
-    # 2. Calibrate dispersion to match observed r_MZ
-    calib_disp <- calibrate_dispersion(obs$r_mz, model = model_name,
-                                        m_ex = m_ex_i, n_pairs = n_pairs_eff)
+      # 1. Simulate observed
+      obs_args <- list(
+        m_ex = m_ex_i, sigma_gamma = sg_i, rho = rho_i,
+        individual_ext = TRUE,
+        n_pairs = n_pairs_eff, rng_seed = seed_i
+      )
+      obs_args[[disp_name]] <- true_disp
+      obs <- do.call(sim_fn, obs_args)
 
-    # 3. Extrapolate to m_ex=0
-    extrap_args <- list(
-      m_ex = 0, sigma_gamma = 0,
-      n_pairs = n_pairs_eff, rng_seed = seed_i + 500L
-    )
-    extrap_args[[disp_name]] <- calib_disp
-    extrap <- do.call(sim_fn, extrap_args)
+      # 2. Calibrate dispersion to match observed r_MZ
+      calib_disp <- calibrate_dispersion(obs$r_mz, model = model_name,
+                                          m_ex = m_ex_i, n_pairs = n_pairs_eff)
 
-    sweep_val <- if (sweep_type == "dose_response") m_ex_i else rho_i
+      # 3. Extrapolate to m_ex=0
+      extrap_args <- list(
+        m_ex = 0, sigma_gamma = 0,
+        n_pairs = n_pairs_eff, rng_seed = seed_i + 500L
+      )
+      extrap_args[[disp_name]] <- calib_disp
+      extrap <- do.call(sim_fn, extrap_args)
+
+      100 * (extrap$h2 - oracle$h2)
+    }, numeric(1))
+
+    m <- mean(rep_biases)
+    se <- if (n_reps > 1) sd(rep_biases) / sqrt(n_reps) else NA_real_
+    t_crit <- if (n_reps > 1) qt(0.975, df = n_reps - 1) else NA_real_
 
     data.frame(
       model = model_name, sweep_type = sweep_type,
       sweep_val = sweep_val,
-      oracle_h2 = oracle$h2, extrap_h2 = extrap$h2,
-      bias = extrap$h2 - oracle$h2,
-      bias_pp = 100 * (extrap$h2 - oracle$h2),
+      oracle_h2 = oracle$h2, extrap_h2 = oracle$h2 + m / 100,
+      bias = m / 100, bias_pp = m,
+      se_pp = se,
+      lo95_pp = m - t_crit * se,
+      hi95_pp = m + t_crit * se,
       stringsAsFactors = FALSE
     )
   }
@@ -901,6 +981,9 @@ run_mc_uncertainty_model <- function(model_name, sigma_theta_true, params,
                     model_name, n_seeds, mc_cores))
   }
 
+  # Pre-compile SR Rcpp before forking workers (avoids parallel build race)
+  if (model_name == "sr") .ensure_sr_cpp()
+
   results <- parallel::mclapply(seq_len(n_seeds), mc.cores = mc_cores, function(s) {
     seed_s <- seed_base + soff + s * 10000L
 
@@ -978,6 +1061,7 @@ combine_mc_uncertainty_multimodel <- function(...) {
   summ <- do.call(rbind, lapply(split(df, df$model), function(d) {
     data.frame(
       model = d$model[1],
+      n_seeds = nrow(d),
       oracle_h2_mean = mean(d$oracle_h2),
       oracle_h2_se = sd(d$oracle_h2) / sqrt(nrow(d)),
       arm1_bias_mean = mean(d$arm1_bias_pp),

@@ -62,44 +62,231 @@ MODEL_PAL       <- c(GM = "#1B6B93", MGG = "#C73E3A", SR = "#D68910")
 MODEL_SHAPES    <- c(GM = 16, MGG = 17, SR = 15)
 MODEL_LINETYPES <- c(GM = "solid", MGG = "dashed", SR = "dotted")
 
+# Standard annotation text sizes (absolute, not relative to theme base_size).
+# All figures use these to ensure consistent rendered font size.
+LABEL_SIZE <- 3.8    # geom_text: data-value labels on points/bars
+ANNOT_SIZE <- 3.5    # annotate("text"): region labels, reference annotations
+ANNOT_EMPH <- 4.0    # annotate("text"): emphasised callouts (bold)
+
+# Patchwork super-title theme (reused across all composite figures)
+patchwork_title_theme <- function() {
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(
+      face = "bold", size = 16, family = "Helvetica Neue",
+      margin = ggplot2::margin(b = 6)
+    ),
+    plot.subtitle = ggplot2::element_text(
+      size = 11, family = "Helvetica Neue", color = "gray35"
+    )
+  )
+}
+
 # ===================================================================
-# Figure 1: Main arms bar chart
+# Figure 1: Two-panel main arms (pointrange + lollipop)
 # ===================================================================
 
-#' Bar chart of h² across all experimental arms
+#' Two-panel Figure 1(B): pointrange for h², lollipop for bias
+#'
+#' Left panel: h² pointrange with 95% CI (cloud of per-seed values optional).
+#' Right panel: bias relative to oracle as lollipop stems from zero.
+#'
+#' @param main_arms_replicated List from run_main_arms_replicated()
+#' @param robustness_cutoff0 List from run_cutoff0_robustness() (replicated)
+#' @return patchwork composite
+plot_main_arms <- function(main_arms_replicated, robustness_cutoff0 = NULL) {
+  s <- main_arms_replicated$summary
+  get_row <- function(metric) {
+    r <- s[s$metric == metric, ]
+    if (nrow(r) == 0) {
+      warning(sprintf("Metric '%s' not found in replicated summary", metric))
+      return(list(mean = NA_real_, se = NA_real_, lo95 = NA_real_, hi95 = NA_real_))
+    }
+    list(mean = r$mean[1], se = r$se[1], lo95 = r$lo95[1], hi95 = r$hi95[1])
+  }
+
+  oracle <- get_row("oracle_h2")
+  arms <- list(
+    list(name = "Oracle", h2 = oracle, bias = list(mean = 0, lo95 = NA, hi95 = NA)),
+    list(name = "Baseline: correctly specified",
+         h2 = get_row("arm1_h2"), bias = get_row("arm1_bias_pp")),
+    list(name = "Misspecified: omitted familial extrinsic",
+         h2 = get_row("arm2_h2"), bias = get_row("arm2_bias_pp")),
+    list(name = "Control: nonfamilial extrinsic",
+         h2 = get_row("ctrl_a_h2"), bias = get_row("ctrl_a_bias_pp")),
+    list(name = "Control: irrelevant trait",
+         h2 = get_row("irrel_h2"), bias = get_row("irrel_bias_pp")),
+    list(name = "Control: vanishing extrinsic",
+         h2 = get_row("ctrl_b_h2"), bias = get_row("ctrl_b_bias_pp")),
+    list(name = "Check: pleiotropy only",
+         h2 = get_row("pleio_iso_h2"), bias = get_row("pleio_iso_bias_pp")),
+    list(name = "Recovery: two-component refit",
+         h2 = get_row("fix_h2"), bias = get_row("fix_bias_pp"))
+  )
+
+  if (!is.null(robustness_cutoff0)) {
+    arms <- c(arms, list(list(
+      name = "Check: no survivor cutoff",
+      h2 = list(mean = robustness_cutoff0$corr_h2,
+                lo95 = robustness_cutoff0$corr_h2_lo95,
+                hi95 = robustness_cutoff0$corr_h2_hi95),
+      bias = list(mean = robustness_cutoff0$bias_pp, lo95 = NA, hi95 = NA)
+    )))
+  }
+
+  arms <- c(arms, list(list(
+    name = "Comparator: Hamilton",
+    h2 = get_row("arm3_h2"), bias = get_row("arm3_bias_pp")
+  )))
+
+  df <- data.frame(
+    Condition = sapply(arms, `[[`, "name"),
+    h2 = sapply(arms, function(a) a$h2$mean),
+    h2_lo = sapply(arms, function(a) if (!is.null(a$h2$lo95)) a$h2$lo95 else NA),
+    h2_hi = sapply(arms, function(a) if (!is.null(a$h2$hi95)) a$h2$hi95 else NA),
+    bias_pp = sapply(arms, function(a) a$bias$mean),
+    bias_lo = sapply(arms, function(a) if (!is.null(a$bias$lo95)) a$bias$lo95 else NA),
+    bias_hi = sapply(arms, function(a) if (!is.null(a$bias$hi95)) a$bias$hi95 else NA),
+    stringsAsFactors = FALSE
+  )
+  df <- df[!is.na(df$h2), ]
+
+  # Display order: Oracle at top after coord_flip (= last factor level)
+  display_order <- c("Comparator: Hamilton", "Control: vanishing extrinsic",
+                     "Control: irrelevant trait", "Control: nonfamilial extrinsic",
+                     "Check: pleiotropy only", "Check: no survivor cutoff",
+                     "Recovery: two-component refit",
+                     "Misspecified: omitted familial extrinsic", "Baseline: correctly specified", "Oracle")
+  display_order <- display_order[display_order %in% df$Condition]
+  df$Condition <- factor(df$Condition, levels = display_order)
+
+  cond_names <- c("Oracle", "Baseline: correctly specified", "Misspecified: omitted familial extrinsic",
+                   "Control: nonfamilial extrinsic", "Control: irrelevant trait",
+                   "Control: vanishing extrinsic", "Check: pleiotropy only",
+                   "Recovery: two-component refit", "Check: no survivor cutoff", "Comparator: Hamilton")
+  pal_keys <- c("Oracle", "Null", "Biased", "ControlA", "Irrelevant",
+                "ControlB", "Pleiotropy", "Fix", "Cutoff0", "Hamilton")
+  condition_colors <- setNames(unname(PAL[pal_keys]), cond_names)
+
+  oracle_h2 <- df$h2[df$Condition == "Oracle"]
+
+  # --- Build per-seed long data for jittered dots ---
+  ps <- main_arms_replicated$per_seed
+  h2_cols <- c(oracle_h2 = "Oracle", arm1_h2 = "Baseline: correctly specified",
+               arm2_h2 = "Misspecified: omitted familial extrinsic",
+               ctrl_a_h2 = "Control: nonfamilial extrinsic",
+               irrel_h2 = "Control: irrelevant trait",
+               ctrl_b_h2 = "Control: vanishing extrinsic",
+               pleio_iso_h2 = "Check: pleiotropy only",
+               fix_h2 = "Recovery: two-component refit", arm3_h2 = "Comparator: Hamilton")
+  seed_rows <- lapply(names(h2_cols), function(col) {
+    if (col %in% names(ps))
+      data.frame(Condition = h2_cols[[col]], h2_seed = ps[[col]],
+                 stringsAsFactors = FALSE)
+  })
+  # Add Cutoff = 0 per-seed data if available
+  if (!is.null(robustness_cutoff0) && !is.null(robustness_cutoff0$per_seed)) {
+    seed_rows <- c(seed_rows, list(
+      data.frame(Condition = "Check: no survivor cutoff",
+                 h2_seed = robustness_cutoff0$per_seed$corr_h2,
+                 stringsAsFactors = FALSE)
+    ))
+  }
+  seed_long <- do.call(rbind, seed_rows)
+  seed_long$Condition <- factor(seed_long$Condition, levels = display_order)
+
+  # --- Left panel: h² pointrange with per-seed jitter ---
+  # Find position of Misspecified condition (highlight row)
+  misspec_cond <- "Misspecified: omitted familial extrinsic"
+  misspec_pos <- which(display_order == misspec_cond)
+
+  p1 <- ggplot2::ggplot(df, ggplot2::aes(x = Condition, y = h2)) +
+    # Subtle gray/pink background for Misspecified row
+    ggplot2::annotate("rect",
+      xmin = misspec_pos - 0.5, xmax = misspec_pos + 0.5,
+      ymin = 0.37, ymax = 0.66,
+      fill = alpha("#D64045", 0.08), color = NA) +
+    ggplot2::geom_hline(yintercept = oracle_h2,
+                        linetype = "dashed", color = "gray55", linewidth = 0.4) +
+    ggplot2::geom_boxplot(data = seed_long,
+      ggplot2::aes(x = Condition, y = h2_seed, fill = Condition),
+      width = 0.4, alpha = 0.35, color = "gray50",
+      outlier.shape = NA, inherit.aes = FALSE) +
+    ggplot2::geom_jitter(data = seed_long,
+      ggplot2::aes(x = Condition, y = h2_seed, color = Condition),
+      width = 0.15, size = 1.2, alpha = 0.3, inherit.aes = FALSE) +
+    ggplot2::geom_linerange(
+      ggplot2::aes(ymin = h2_lo, ymax = h2_hi),
+      linewidth = 0.7, color = "gray20") +
+    ggplot2::geom_point(size = 1.8, color = "gray10") +
+    ggplot2::coord_flip() +
+    ggplot2::scale_x_discrete(limits = display_order) +
+    ggplot2::scale_color_manual(values = condition_colors, guide = "none") +
+    ggplot2::scale_fill_manual(values = condition_colors, guide = "none") +
+    ggplot2::scale_y_continuous(limits = c(0.38, 0.65),
+      breaks = seq(0.40, 0.65, by = 0.05)) +
+    ggplot2::labs(title = bquote(hat(h)^2 ~ ": mean \u00b1 95% CI across seeds"),
+                  subtitle = NULL,
+                  x = NULL, y = expression(hat(h)^2)) +
+    theme_pub()
+
+  # --- Right panel: bias lollipop ---
+  p2 <- ggplot2::ggplot(df, ggplot2::aes(x = Condition, y = bias_pp,
+                                          color = Condition)) +
+    # Subtle gray/pink background for Misspecified row
+    ggplot2::annotate("rect",
+      xmin = misspec_pos - 0.5, xmax = misspec_pos + 0.5,
+      ymin = -40, ymax = 40,
+      fill = alpha("#D64045", 0.08), color = NA) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed",
+                        color = "gray55", linewidth = 0.4) +
+    ggplot2::geom_segment(ggplot2::aes(xend = Condition, y = 0, yend = bias_pp),
+                          linewidth = 0.8) +
+    ggplot2::geom_point(size = 2) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_x_discrete(limits = display_order) +
+    ggplot2::scale_color_manual(values = condition_colors, guide = "none") +
+    ggplot2::labs(title = "Bias vs oracle (pp)",
+                  x = NULL, y = "Bias (pp)") +
+    theme_pub() +
+    ggplot2::theme(axis.text.y = ggplot2::element_blank(),
+                   axis.ticks.y = ggplot2::element_blank())
+
+  p1 + p2 + patchwork::plot_layout(widths = c(1.3, 1))
+}
+
+#' Legacy bar chart of h² (single-seed, no CIs) — fallback only
 #'
 #' @param summary_table Data frame from build_summary_table()
 #' @return ggplot object
-plot_main_arms <- function(summary_table) {
+plot_main_arms_legacy <- function(summary_table) {
   df <- summary_table
   df <- df[!is.na(df$h2), ]
   df$Condition <- factor(df$Condition, levels = rev(df$Condition))
+  df$bias_pp <- 100 * df$bias
 
-  # Semantic color mapping by condition name
   condition_colors <- setNames(
     unname(PAL[c("Oracle", "Null", "Biased", "ControlA", "Irrelevant",
                  "ControlB", "Pleiotropy", "Fix", "Cutoff0", "Hamilton")]),
-    c("Oracle (intrinsic only)", "Arm 1: Correctly specified",
-      "Arm 2: Misspecification", "Control A: Non-heritable extrinsic",
-      "Irrelevant trait (zeta)", "Control B: Vanishing m_ex",
-      "Pleiotropy isolation (rho=0)", "Oracle fix: correct model",
-      "Cutoff = 0", "Arm 3: Hamilton conditioning")
+    c("Oracle", "Baseline: correctly specified",
+      "Misspecified: omitted familial extrinsic", "Control: nonfamilial extrinsic",
+      "Control: irrelevant trait", "Control: vanishing extrinsic",
+      "Check: pleiotropy only", "Recovery: two-component refit",
+      "Check: no survivor cutoff", "Comparator: Hamilton")
   )
 
-  oracle_h2 <- df$h2[grepl("Oracle.*intrinsic", df$Condition)]
+  oracle_h2 <- df$h2[df$Condition == "Oracle"]
 
   ggplot2::ggplot(df, ggplot2::aes(x = Condition, y = h2, fill = Condition)) +
     ggplot2::geom_col(width = 0.7) +
     ggplot2::geom_hline(yintercept = oracle_h2,
                         linetype = "dashed", color = "gray50", linewidth = 0.5) +
     ggplot2::geom_text(ggplot2::aes(
-      label = sprintf("%.3f\n(%+.1f pp)", h2, bias * 100)),
-      hjust = -0.05, size = 3.8, color = "gray30") +
+      label = sprintf("%.3f\n(%+.1f pp)", h2, bias_pp)),
+      hjust = -0.05, size = LABEL_SIZE, color = "gray30") +
     ggplot2::coord_flip(ylim = c(0, max(df$h2, na.rm = TRUE) * 1.25)) +
     ggplot2::scale_fill_manual(values = condition_colors, guide = "none") +
     ggplot2::labs(
-      title = "Falconer h\u00b2 across experimental arms",
-      subtitle = "Dashed line = oracle (true intrinsic-only) h\u00b2",
+      title = expression(hat(h)^2 ~ "across experimental arms"),
       x = NULL, y = expression(hat(h)^2)
     ) +
     theme_pub()
@@ -126,9 +313,7 @@ plot_sweep_heatmap <- function(sweep_df) {
       ratio = diff(range(df$sigma_gamma)) / diff(range(df$rho))
     ) +
     ggplot2::labs(
-      title = "Heritability bias (pp) across parameter space",
-      subtitle = expression(paste("Bias = ", hat(h)^2 - h[oracle]^2,
-                                  ", pooled over ", sigma[gamma], " and ", rho)),
+      title = "Bias across parameter space",
       x = expression(sigma[gamma]), y = expression(rho)
     ) +
     theme_pub() +
@@ -157,11 +342,7 @@ plot_anchored_heatmap <- function(anchored_df) {
       ratio = diff(range(df$sigma_gamma)) / diff(range(df$rho))
     ) +
     ggplot2::labs(
-      title = "Anchored region: heritability bias (pp)",
-      subtitle = expression(paste(
-        sigma[gamma] %in% group("[", list(0.30, 0.65), "]"),
-        ", ", rho %in% group("[", list(0.20, 0.50), "]")
-      )),
+      title = "Anchored region",
       x = expression(sigma[gamma]), y = expression(rho)
     ) +
     theme_pub() +
@@ -180,8 +361,8 @@ plot_anchored_heatmap <- function(anchored_df) {
 plot_model_comparison <- function(model_table) {
   df_long <- data.frame(
     Model = rep(model_table$Model, 2),
-    Arm = rep(c("Arm 1 (null)", "Arm 2 (misspec)"), each = nrow(model_table)),
-    bias_pp = c(model_table$Arm1_bias_pp, model_table$Arm2_bias_pp),
+    Arm = rep(c("Baseline (correctly specified)", "Misspecified (omitted familial)"), each = nrow(model_table)),
+    bias_pp = c(model_table$Baseline_bias_pp, model_table$Misspec_bias_pp),
     stringsAsFactors = FALSE
   )
   df_long$Model <- factor(df_long$Model, levels = model_table$Model)
@@ -193,15 +374,14 @@ plot_model_comparison <- function(model_table) {
     ggplot2::geom_text(
       ggplot2::aes(label = sprintf("%+.1f", bias_pp)),
       position = ggplot2::position_dodge(width = 0.7),
-      vjust = -0.5, size = 4.2
+      vjust = -0.5, size = LABEL_SIZE
     ) +
     ggplot2::scale_fill_manual(
-      values = c("Arm 1 (null)" = unname(PAL["Null"]),
-                 "Arm 2 (misspec)" = unname(PAL["Biased"]))
+      values = c("Baseline (correctly specified)" = unname(PAL["Null"]),
+                 "Misspecified (omitted familial)" = unname(PAL["Biased"]))
     ) +
     ggplot2::labs(
       title = "Bias across mortality models",
-      subtitle = "All three models show positive bias under misspecification",
       x = NULL, y = "Bias (percentage points)",
       fill = NULL
     ) +
@@ -225,15 +405,15 @@ plot_controls <- function(controls_table) {
     ggplot2::geom_col(width = 0.6) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
     ggplot2::geom_text(ggplot2::aes(label = sprintf("%+.1f pp", bias_pp)),
-                       hjust = ifelse(df$bias_pp > 0, -0.1, 1.1),
-                       size = 4.2) +
+                       hjust = -0.1,
+                       size = LABEL_SIZE) +
     ggplot2::coord_flip(clip = "off") +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.02, 0.15))) +
     ggplot2::scale_fill_manual(values = c("TRUE" = unname(PAL["Biased"]),
                                           "FALSE" = unname(PAL["Oracle"])),
                                guide = "none") +
     ggplot2::labs(
-      title = "Control experiments: bias (pp)",
-      subtitle = "Only heritable, mortality-relevant, pleiotropic traits produce substantial bias",
+      title = "Control experiments",
       x = NULL, y = "Bias (percentage points)"
     ) +
     theme_pub()
@@ -249,12 +429,17 @@ plot_controls <- function(controls_table) {
 #' @return ggplot object
 plot_dose_response <- function(dose_response_df) {
   ggplot2::ggplot(dose_response_df,
-                  ggplot2::aes(x = m_ex * 1000, y = bias * 100)) +
+                  ggplot2::aes(x = m_ex * 1000, y = bias_pp)) +
+    {if ("se_pp" %in% names(dose_response_df))
+      ggplot2::geom_ribbon(
+        ggplot2::aes(ymin = lo95_pp, ymax = hi95_pp),
+        fill = PAL["Biased"], alpha = 0.15)
+    } +
     ggplot2::geom_line(color = PAL["Biased"], linewidth = 1) +
     ggplot2::geom_point(color = PAL["Biased"], size = 2.5) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::labs(
-      title = "Dose-response: bias scales with extrinsic mortality",
+      title = "Dose-response",
       subtitle = expression(paste(sigma[gamma], " = 0.40, ", rho, " = 0.4")),
       x = expression(m[ex] %*% 10^3),
       y = "Bias (pp)"
@@ -283,7 +468,7 @@ plot_negative_rho <- function(neg_rho_df) {
                       fill = PAL["Pleiotropy"], alpha = 0.08) +
     ggplot2::annotate("text", x = mean(c(min(neg_rho_df$rho), 0)), y = max(neg_rho_df$bias_pp) * 0.9,
                       label = expression("Negative " * rho * ": deflation"),
-                      color = PAL["Pleiotropy"], size = 4.0,
+                      color = PAL["Pleiotropy"], size = ANNOT_SIZE,
                       fontface = "italic", lineheight = 0.9) +
     # Shaded region: anchored sensitivity range
     ggplot2::annotate("rect",
@@ -292,8 +477,14 @@ plot_negative_rho <- function(neg_rho_df) {
                       fill = PAL["Oracle"], alpha = 0.08) +
     ggplot2::annotate("text", x = (rho_lo + rho_hi) / 2, y = max(neg_rho_df$bias_pp) * 0.9,
                       label = "Anchored\nregime",
-                      color = PAL["Oracle"], size = 4.0,
+                      color = PAL["Oracle"], size = ANNOT_SIZE,
                       fontface = "italic") +
+    # Uncertainty ribbon (if available)
+    {if ("se_pp" %in% names(neg_rho_df))
+      ggplot2::geom_ribbon(
+        ggplot2::aes(ymin = lo95_pp, ymax = hi95_pp),
+        fill = PAL["Biased"], alpha = 0.15)
+    } +
     # Data
     ggplot2::geom_line(color = PAL["Biased"], linewidth = 1) +
     ggplot2::geom_point(color = PAL["Biased"], size = 2.5) +
@@ -302,13 +493,9 @@ plot_negative_rho <- function(neg_rho_df) {
     ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "gray50",
                         linewidth = 0.6) +
     ggplot2::labs(
-      title = expression("Bias vs genetic correlation " * rho * ": sign reversal under negative " * rho),
-      subtitle = expression(
-        "At " * sigma[gamma] == 0.40 *
-        "; negative " * rho * " reverses inflation to deflation"
-      ),
-      x = expression("Genetic correlation " * rho *
-                      " between intrinsic and extrinsic susceptibility"),
+      title = expression("Bias vs " * rho),
+      subtitle = expression(sigma[gamma] == 0.40),
+      x = expression("Genetic correlation " * rho),
       y = "Bias (percentage points)"
     ) +
     theme_pub()
@@ -329,9 +516,7 @@ plot_mex_split <- function(mex_split_df) {
     ggplot2::geom_point(color = PAL["Biased"], size = 2.5) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::labs(
-      title = "Bias vs heritable fraction of extrinsic mortality",
-      subtitle = expression(paste(m[ex], " = ", m[inf], " + ", m[other],
-                                  "; only ", m[inf], " gets ", gamma)),
+      title = "Heritable fraction sensitivity",
       x = expression(f[heritable] == m[inf] / m[ex]),
       y = "Bias (pp)"
     ) +
@@ -361,8 +546,8 @@ plot_sigma_gamma_bridge <- function(bridge_result) {
                       ymin = -Inf, ymax = Inf,
                       fill = PAL["Oracle"], alpha = 0.10) +
     ggplot2::annotate("text", x = (sg_lo + sg_hi) / 2, y = 0.48,
-                      label = "Our sensitivity\nrange",
-                      color = PAL["Oracle"], size = 4.0,
+                      label = "Sensitivity\nrange",
+                      color = PAL["Oracle"], size = ANNOT_SIZE,
                       fontface = "italic", lineheight = 0.9) +
     # Raw simulated curve (no smoothing)
     ggplot2::geom_line(color = PAL["Oracle"], linewidth = 0.9) +
@@ -371,7 +556,7 @@ plot_sigma_gamma_bridge <- function(bridge_result) {
                         color = PAL["Biased"], linewidth = 0.7) +
     ggplot2::annotate("text", x = 0.15, y = 0.425,
                       label = expression(Obel~et~al.~target:~h[L]^2 == 0.40),
-                      color = PAL["Biased"], size = 4.2, hjust = 0)
+                      color = PAL["Biased"], size = ANNOT_SIZE, hjust = 0)
 
   if (!is.na(bridge_sg)) {
     p <- p +
@@ -379,7 +564,7 @@ plot_sigma_gamma_bridge <- function(bridge_result) {
                           color = PAL["Null"], linewidth = 0.7) +
       ggplot2::annotate("text", x = bridge_sg - 0.05, y = 0.12,
                         label = sprintf("\u03c3\u03b3 \u2248 %.2f", bridge_sg),
-                        color = PAL["Null"], size = 4.5, hjust = 1,
+                        color = PAL["Null"], size = ANNOT_EMPH, hjust = 1,
                         fontface = "bold")
   }
 
@@ -393,15 +578,9 @@ plot_sigma_gamma_bridge <- function(bridge_result) {
       breaks = seq(0, 0.5, by = 0.1)
     ) +
     ggplot2::labs(
-      title = "Bridging simulation input \u03c3\u03b3 to empirical infection-death heritability",
-      subtitle = expression(
-        "Simulated " * hat(h)[L]^2 *
-        " from tetrachoric twin correlations under the full competing-risks DGP"
-      ),
-      x = expression("Log-hazard frailty dispersion " * sigma[gamma] *
-                      " (simulation input)"),
-      y = expression("Liability-scale heritability " * hat(h)[L]^2 *
-                      " (empirical target)")
+      title = expression(sigma[gamma] ~ "bridge curve"),
+      x = expression(sigma[gamma]),
+      y = expression(hat(h)[L]^2)
     ) +
     theme_pub()
 }
@@ -435,8 +614,7 @@ plot_mgg_hazard_curves <- function(hazard_df) {
 
   p +
     ggplot2::labs(
-      title = "MGG intrinsic hazard: compensatory vs paper parameterization",
-      subtitle = expression(paste("SM convergence at t* = -ln(", a[0], ") / ", b[0])),
+      title = "MGG intrinsic hazard",
       x = "Age (years)", y = expression(mu[int](t) ~ "(log scale)"),
       color = "q", linetype = "Mapping"
     ) +
@@ -487,9 +665,9 @@ plot_mgg_param_comparison <- function(comparison) {
     ggplot2::geom_vline(xintercept = t_star, linetype = "dotted",
                         color = "gray50", linewidth = 0.5) +
     ggplot2::annotate("text", x = t_star + 1, y = 0.003,
-      label = paste0("t* = ", round(t_star)), hjust = 0, size = 3.8) +
+      label = paste0("t* = ", round(t_star)), hjust = 0, size = ANNOT_SIZE) +
     ggplot2::labs(
-      title = "A. Intrinsic hazard curves",
+      title = "A. Intrinsic hazard",
       x = "Age (years)", y = expression(mu[int](t)),
       color = "SM mapping", linetype = "q") +
     theme_pub() +
@@ -515,12 +693,12 @@ plot_mgg_param_comparison <- function(comparison) {
                         color = mapping_colors["paper"], linewidth = 0.4) +
     ggplot2::annotate("text", x = mean_comp + 1, y = 0.85,
       label = sprintf("mean = %.0f", mean_comp),
-      color = mapping_colors["compensatory"], hjust = 0, size = 3.8) +
+      color = mapping_colors["compensatory"], hjust = 0, size = ANNOT_SIZE) +
     ggplot2::annotate("text", x = mean_paper + 1, y = 0.75,
       label = sprintf("mean = %.0f", mean_paper),
-      color = mapping_colors["paper"], hjust = 0, size = 3.8) +
+      color = mapping_colors["paper"], hjust = 0, size = ANNOT_SIZE) +
     ggplot2::labs(
-      title = "B. Cohort survival (intrinsic only)",
+      title = "B. Cohort survival",
       x = "Age (years)", y = "S(t)",
       color = "SM mapping") +
     theme_pub() +
@@ -552,15 +730,15 @@ plot_mgg_param_comparison <- function(comparison) {
                       width = 0.6) +
     ggplot2::geom_text(ggplot2::aes(label = sprintf("%.3f", value)),
       position = ggplot2::position_dodge(width = 0.7),
-      vjust = -0.5, size = 3.8) +
+      vjust = -0.5, size = LABEL_SIZE) +
     ggplot2::scale_fill_manual(values = setNames(
       mapping_colors, mapping_labels)) +
     ggplot2::geom_hline(yintercept = 1.0, linetype = "dashed",
                         color = "gray50", linewidth = 0.4) +
     ggplot2::annotate("text", x = 3.3, y = 1.03, label = "h\u00B2 = 1",
-                      size = 3.5, color = "gray40") +
+                      size = ANNOT_SIZE, color = "gray40") +
     ggplot2::labs(
-      title = "C. Twin correlations & h\u00B2",
+      title = expression("C. Twin correlations & " * hat(h)^2),
       x = NULL, y = "Value", fill = "SM mapping") +
     ggplot2::ylim(NA, max(tdf_long$value) * 1.15) +
     theme_pub() +
@@ -569,7 +747,9 @@ plot_mgg_param_comparison <- function(comparison) {
   # Combine with patchwork
   patchwork::wrap_plots(p_hazard, p_surv, p_twin, ncol = 3) +
     patchwork::plot_annotation(
-      title = "MGG Strehler-Mildvan parameterization: compensatory (a = a0^q) vs paper (a = a0^{1/q})")
+      title = "MGG SM parameterization comparison",
+      theme = patchwork_title_theme()
+    )
 }
 
 # ===================================================================
@@ -597,10 +777,10 @@ plot_variance_decomp <- function(var_decomp, alpha_beta) {
     ) +
     ggplot2::annotate("text", x = min(df$predicted_var),
                       y = max(df$actual_var) * 0.95,
-                      label = lbl, hjust = 0, size = 4.0,
+                      label = lbl, hjust = 0, size = ANNOT_SIZE,
                       family = "mono") +
     ggplot2::labs(
-      title = "Pseudo-true variance prediction tracks fitted variance",
+      title = "Variance decomposition",
       x = expression("Predicted " ~ sigma[fit]^2),
       y = expression("Actual " ~ sigma[fit]^2),
       color = expression(rho)
@@ -642,11 +822,10 @@ plot_joint_diagnostic <- function(joint_diag) {
                                            "Misspec (r_MZ-only)" = unname(PAL["Biased"]))) +
     ggplot2::annotate("text", x = min(df$r_MZ[1:2]),
                       y = max(df$r_DZ[1:2]) + 0.01,
-                      label = lbl, hjust = 0, size = 4.0,
+                      label = lbl, hjust = 0, size = ANNOT_SIZE,
                       family = "mono") +
     ggplot2::labs(
-      title = "Joint (r_MZ, r_DZ) calibration diagnostic",
-      subtitle = "Arrow: true DGP -> misspecified model prediction",
+      title = "Joint calibration",
       x = expression(r[MZ]), y = expression(r[DZ]),
       color = NULL
     ) +
@@ -665,12 +844,11 @@ plot_sr_dt_sensitivity <- function(sr_dt_df) {
   ggplot2::ggplot(sr_dt_df, ggplot2::aes(x = dt_label, y = arm2_bias_pp)) +
     ggplot2::geom_col(fill = PAL["Biased"], width = 0.5) +
     ggplot2::geom_text(ggplot2::aes(label = sprintf("%+.1f pp", arm2_bias_pp)),
-                       vjust = -0.5, size = 4.5) +
+                       vjust = -0.5, size = LABEL_SIZE) +
     ggplot2::labs(
-      title = "SR model: Arm 2 bias stability across time steps",
-      subtitle = "Euler-Maruyama convergence check",
+      title = "SR time-step sensitivity",
       x = expression(Delta * t ~ "(fraction of year)"),
-      y = "Arm 2 bias (pp)"
+      y = "Misspecified bias (pp)"
     ) +
     theme_pub()
 }
@@ -687,30 +865,45 @@ plot_sr_dt_sensitivity <- function(sr_dt_df) {
 plot_negative_rho_multimodel <- function(neg_rho_gm, model_controls) {
   gm_df <- data.frame(
     model = "GM", rho = neg_rho_gm$rho,
-    bias_pp = neg_rho_gm$bias_pp, stringsAsFactors = FALSE
+    bias_pp = neg_rho_gm$bias_pp,
+    se_pp = if ("se_pp" %in% names(neg_rho_gm)) neg_rho_gm$se_pp else NA_real_,
+    lo95_pp = if ("lo95_pp" %in% names(neg_rho_gm)) neg_rho_gm$lo95_pp else NA_real_,
+    hi95_pp = if ("hi95_pp" %in% names(neg_rho_gm)) neg_rho_gm$hi95_pp else NA_real_,
+    stringsAsFactors = FALSE
   )
   mc_rho <- model_controls[model_controls$sweep_type == "negative_rho", ]
   mc_df <- data.frame(
     model = toupper(mc_rho$model),
     rho = mc_rho$sweep_val,
-    bias_pp = mc_rho$bias_pp, stringsAsFactors = FALSE
+    bias_pp = mc_rho$bias_pp,
+    se_pp = if ("se_pp" %in% names(mc_rho)) mc_rho$se_pp else NA_real_,
+    lo95_pp = if ("lo95_pp" %in% names(mc_rho)) mc_rho$lo95_pp else NA_real_,
+    hi95_pp = if ("hi95_pp" %in% names(mc_rho)) mc_rho$hi95_pp else NA_real_,
+    stringsAsFactors = FALSE
   )
   df <- rbind(gm_df, mc_df)
   df$model <- factor(df$model, levels = c("GM", "MGG", "SR"))
 
-  ggplot2::ggplot(df, ggplot2::aes(x = rho, y = bias_pp,
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = rho, y = bias_pp,
                                     color = model, shape = model,
-                                    linetype = model)) +
+                                    linetype = model, fill = model))
+  # Add CI ribbons if available
+  if (any(!is.na(df$lo95_pp))) {
+    p <- p + ggplot2::geom_ribbon(
+      ggplot2::aes(ymin = lo95_pp, ymax = hi95_pp),
+      alpha = 0.15, linewidth = 0, color = NA)
+  }
+  p +
     ggplot2::geom_line(linewidth = 0.9) +
     ggplot2::geom_point(size = 2.5) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::geom_vline(xintercept = 0, linetype = "dotted", color = "gray60") +
     ggplot2::scale_color_manual(values = MODEL_PAL) +
+    ggplot2::scale_fill_manual(values = MODEL_PAL, guide = "none") +
     ggplot2::scale_shape_manual(values = MODEL_SHAPES) +
     ggplot2::scale_linetype_manual(values = MODEL_LINETYPES) +
     ggplot2::labs(
-      title = expression("Bias vs genetic correlation " * rho * " across all three models"),
-      subtitle = "Sign reversal appears in all three models",
+      title = expression("Bias vs " * rho ~ "(all models)"),
       x = expression("Genetic correlation " * rho),
       y = "Bias (pp)", color = "Model", shape = "Model", linetype = "Model"
     ) +
@@ -730,28 +923,43 @@ plot_negative_rho_multimodel <- function(neg_rho_gm, model_controls) {
 plot_dose_response_multimodel <- function(dose_response_gm, model_controls) {
   gm_df <- data.frame(
     model = "GM", m_ex = dose_response_gm$m_ex,
-    bias_pp = dose_response_gm$bias * 100, stringsAsFactors = FALSE
+    bias_pp = dose_response_gm$bias_pp,
+    se_pp = if ("se_pp" %in% names(dose_response_gm)) dose_response_gm$se_pp else NA_real_,
+    lo95_pp = if ("lo95_pp" %in% names(dose_response_gm)) dose_response_gm$lo95_pp else NA_real_,
+    hi95_pp = if ("hi95_pp" %in% names(dose_response_gm)) dose_response_gm$hi95_pp else NA_real_,
+    stringsAsFactors = FALSE
   )
   mc_dr <- model_controls[model_controls$sweep_type == "dose_response", ]
   mc_df <- data.frame(
     model = toupper(mc_dr$model),
     m_ex = mc_dr$sweep_val,
-    bias_pp = mc_dr$bias_pp, stringsAsFactors = FALSE
+    bias_pp = mc_dr$bias_pp,
+    se_pp = if ("se_pp" %in% names(mc_dr)) mc_dr$se_pp else NA_real_,
+    lo95_pp = if ("lo95_pp" %in% names(mc_dr)) mc_dr$lo95_pp else NA_real_,
+    hi95_pp = if ("hi95_pp" %in% names(mc_dr)) mc_dr$hi95_pp else NA_real_,
+    stringsAsFactors = FALSE
   )
   df <- rbind(gm_df, mc_df)
   df$model <- factor(df$model, levels = c("GM", "MGG", "SR"))
 
-  ggplot2::ggplot(df, ggplot2::aes(x = m_ex * 1000, y = bias_pp,
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = m_ex * 1000, y = bias_pp,
                                     color = model, shape = model,
-                                    linetype = model)) +
+                                    linetype = model, fill = model))
+  if (any(!is.na(df$lo95_pp))) {
+    p <- p + ggplot2::geom_ribbon(
+      ggplot2::aes(ymin = lo95_pp, ymax = hi95_pp),
+      alpha = 0.15, linewidth = 0, color = NA)
+  }
+  p +
     ggplot2::geom_line(linewidth = 0.9) +
     ggplot2::geom_point(size = 2.5) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::scale_color_manual(values = MODEL_PAL) +
+    ggplot2::scale_fill_manual(values = MODEL_PAL, guide = "none") +
     ggplot2::scale_shape_manual(values = MODEL_SHAPES) +
     ggplot2::scale_linetype_manual(values = MODEL_LINETYPES) +
     ggplot2::labs(
-      title = "Dose-response: bias scales with extrinsic mortality (all models)",
+      title = "Dose-response (all models)",
       subtitle = expression(paste(sigma[gamma], " = 0.40, ", rho, " = 0.4")),
       x = expression(m[ex] %*% 10^3),
       y = "Bias (pp)", color = "Model", shape = "Model", linetype = "Model"
@@ -761,7 +969,7 @@ plot_dose_response_multimodel <- function(dose_response_gm, model_controls) {
 }
 
 # ===================================================================
-# Multi-model comparison: Pleiotropy isolation
+# Multi-model comparison: Check pleiotropy only
 # ===================================================================
 
 #' Multi-model pleiotropy isolation bar chart
@@ -773,12 +981,12 @@ plot_pleiotropy_multimodel <- function(controls_table, model_controls) {
   mc_pl <- model_controls[model_controls$sweep_type == "pleiotropy_isolation", ]
 
   # GM arm2 reference and rho=0 from controls_table
-  gm_arm2 <- controls_table$bias_pp[controls_table$Control == "Arm 2 reference"]
-  gm_rho0 <- controls_table$bias_pp[controls_table$Control == "Pleiotropy isolation (rho=0)"]
+  gm_arm2 <- controls_table$bias_pp[controls_table$Control == "Misspecified (reference)"]
+  gm_rho0 <- controls_table$bias_pp[controls_table$Control == "Check: pleiotropy only (ρ=0)"]
 
   df <- data.frame(
     Model = c("GM", "GM", "MGG", "MGG", "SR", "SR"),
-    Condition = rep(c("Arm 2 (rho=0.4)", "rho=0"), 3),
+    Condition = rep(c("Misspecified (ρ=0.4)", "Check: pleiotropy only (ρ=0)"), 3),
     bias_pp = c(
       gm_arm2, gm_rho0,
       mc_pl$bias_pp[mc_pl$model == "mgg"], NA,
@@ -805,11 +1013,10 @@ plot_pleiotropy_multimodel <- function(controls_table, model_controls) {
     ggplot2::geom_col(width = 0.6) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::geom_text(ggplot2::aes(label = sprintf("%+.1f pp", bias_pp_rho0)),
-                       vjust = -0.5, size = 4.5) +
+                       vjust = -0.5, size = LABEL_SIZE) +
     ggplot2::scale_fill_manual(values = MODEL_PAL, guide = "none") +
     ggplot2::labs(
-      title = "Pleiotropy isolation (\u03c1=0) across models",
-      subtitle = "Removing genetic correlation collapses bias in all models",
+      title = expression("Check: pleiotropy only (" * rho * " = 0)"),
       x = NULL, y = "Bias (pp)"
     ) +
     theme_pub()
@@ -829,9 +1036,7 @@ plot_all_diagnostics <- function(plots) {
   patchwork::wrap_plots(available, ncol = 3) +
     patchwork::plot_annotation(
       title = "Diagnostic panel",
-      theme = ggplot2::theme(
-        plot.title = ggplot2::element_text(face = "bold", size = 16)
-      )
+      theme = patchwork_title_theme()
     )
 }
 
@@ -889,6 +1094,9 @@ plot_alt_ext_forms <- function(alt_ext_df) {
   }))
   agg$form_label <- factor(agg$form_label,
     levels = c("Log-normal", "Additive", "Gamma"))
+  agg$t_crit <- qt(0.975, df = agg$n_reps - 1)
+  agg$lo95 <- agg$mean_pp - agg$t_crit * agg$se_pp
+  agg$hi95 <- agg$mean_pp + agg$t_crit * agg$se_pp
 
   form_colors <- c("Log-normal" = unname(PAL["Biased"]),
                     "Additive" = unname(PAL["ControlA"]),
@@ -899,25 +1107,21 @@ plot_alt_ext_forms <- function(alt_ext_df) {
     ggplot2::geom_jitter(data = alt_ext_df,
       ggplot2::aes(x = form_label, y = bias_pp, color = form_label),
       width = 0.15, size = 1.5, alpha = 0.35) +
-    # Mean + 95% CI
+    # Mean + 95% CI (t-distribution)
     ggplot2::geom_pointrange(
-      ggplot2::aes(ymin = mean_pp - 1.96 * se_pp,
-                   ymax = mean_pp + 1.96 * se_pp),
-      size = 0.8, linewidth = 0.9, fatten = 3) +
+      ggplot2::aes(ymin = lo95, ymax = hi95),
+      size = 0.8, linewidth = 0.5, alpha = 0.8) +
     ggplot2::geom_text(ggplot2::aes(
-      label = sprintf("%+.1f \u00b1 %.1f pp", mean_pp, 1.96 * se_pp)),
-      vjust = -1.2, size = 4.5, color = "gray25", show.legend = FALSE) +
+      label = sprintf("%+.1f \u00b1 %.1f pp", mean_pp, t_crit * se_pp)),
+      vjust = -1.2, size = LABEL_SIZE, color = "gray25", show.legend = FALSE) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::scale_color_manual(values = form_colors, guide = "none") +
     ggplot2::coord_cartesian(ylim = c(
       min(0, min(alt_ext_df$bias_pp) - 1),
       max(alt_ext_df$bias_pp) + 4)) +
     ggplot2::labs(
-      title = "Upward bias is robust to extrinsic frailty construction",
-      subtitle = expression(
-        paste("Point-range = mean \u00b1 95% CI (10 reps); ",
-              sigma[gamma], " = 0.40, ", rho, " = 0.4; GM model")
-      ),
+      title = "Functional form robustness",
+      subtitle = expression(paste(sigma[gamma], " = 0.40, ", rho, " = 0.4")),
       x = "Extrinsic frailty construction",
       y = "Net bias (percentage points)"
     ) +
@@ -947,6 +1151,9 @@ plot_extended_sigma_gamma <- function(ext_sg_df) {
     )
   }))
   agg <- agg[order(agg$sigma_gamma), ]
+  agg$t_crit <- qt(0.975, df = agg$n_reps - 1)
+  agg$lo95 <- agg$mean_pp - agg$t_crit * agg$se_pp
+  agg$hi95 <- agg$mean_pp + agg$t_crit * agg$se_pp
 
   ggplot2::ggplot(agg, ggplot2::aes(x = sigma_gamma, y = mean_pp)) +
     # Shade anchored regime
@@ -955,12 +1162,11 @@ plot_extended_sigma_gamma <- function(ext_sg_df) {
                       fill = PAL["Oracle"], alpha = 0.08) +
     ggplot2::annotate("text", x = 0.475, y = max(agg$mean_pp) * 0.3,
                       label = "Anchored\nrange",
-                      color = PAL["Oracle"], size = 4.0,
+                      color = PAL["Oracle"], size = ANNOT_SIZE,
                       fontface = "italic", lineheight = 0.9) +
-    # 95% CI ribbon
+    # 95% CI ribbon (t-distribution)
     ggplot2::geom_ribbon(
-      ggplot2::aes(ymin = mean_pp - 1.96 * se_pp,
-                   ymax = mean_pp + 1.96 * se_pp),
+      ggplot2::aes(ymin = lo95, ymax = hi95),
       fill = PAL["Biased"], alpha = 0.15) +
     # Individual reps as faint points
     ggplot2::geom_point(data = ext_sg_df,
@@ -969,20 +1175,17 @@ plot_extended_sigma_gamma <- function(ext_sg_df) {
     ggplot2::geom_line(color = PAL["Biased"], linewidth = 1) +
     ggplot2::geom_point(color = PAL["Biased"], size = 3) +
     ggplot2::geom_text(ggplot2::aes(label = sprintf("%.1f", mean_pp)),
-                       vjust = -1, size = 4.0, color = "gray30") +
+                       vjust = -1, size = LABEL_SIZE, color = "gray30") +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::geom_vline(xintercept = sg_ceil, linetype = "dotted",
                         color = "gray50", linewidth = 0.5) +
     # Bridge-implied upper bound annotation
     ggplot2::annotate("text", x = max(agg$sigma_gamma), y = max(agg$mean_pp) * 0.55,
                       label = expression("bridge-implied " * sigma[gamma] %~~% 1.47),
-                      hjust = 1, size = 3.8, color = "gray40", fontface = "italic") +
+                      hjust = 1, size = ANNOT_SIZE, color = "gray40", fontface = "italic") +
     ggplot2::labs(
-      title = "Bias continues to increase beyond the anchored ceiling",
-      subtitle = expression(
-        paste(rho, " = 0.35; ribbon = 95% CI (10 reps); ",
-              "dotted = anchored ceiling ", sigma[gamma], " = 0.65")
-      ),
+      title = expression("Extended " * sigma[gamma] * " stress test"),
+      subtitle = expression(paste(rho, " = 0.35")),
       x = expression(sigma[gamma]),
       y = "Bias (percentage points)"
     ) +
@@ -1001,6 +1204,8 @@ plot_mc_uncertainty <- function(mc_result) {
   df <- mc_result$per_seed
   summ <- mc_result$summary
 
+  n_seeds <- nrow(df)
+  t_crit <- qt(0.975, df = n_seeds - 1)
   arm2_mean <- summ$mean[summ$statistic == "arm2_bias_pp"]
   arm2_se   <- summ$se[summ$statistic == "arm2_bias_pp"]
   arm1_mean <- summ$mean[summ$statistic == "arm1_bias_pp"]
@@ -1008,26 +1213,26 @@ plot_mc_uncertainty <- function(mc_result) {
 
   # Reshape to long format
   df_long <- rbind(
-    data.frame(seed = df$seed, arm = "Arm 2 (misspecified)",
+    data.frame(seed = df$seed, arm = "Misspecified (omitted familial)",
                bias_pp = df$arm2_bias_pp, stringsAsFactors = FALSE),
-    data.frame(seed = df$seed, arm = "Arm 1 (correctly specified)",
+    data.frame(seed = df$seed, arm = "Baseline (correctly specified)",
                bias_pp = df$arm1_bias_pp, stringsAsFactors = FALSE)
   )
   df_long$arm <- factor(df_long$arm,
-    levels = c("Arm 1 (correctly specified)", "Arm 2 (misspecified)"))
+    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
 
   # Summary for mean + CI bands
   ci_df <- data.frame(
-    arm = factor(c("Arm 1 (correctly specified)", "Arm 2 (misspecified)"),
-                 levels = c("Arm 1 (correctly specified)", "Arm 2 (misspecified)")),
+    arm = factor(c("Baseline (correctly specified)", "Misspecified (omitted familial)"),
+                 levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)")),
     mean = c(arm1_mean, arm2_mean),
-    lo = c(arm1_mean - 1.96 * arm1_se, arm2_mean - 1.96 * arm2_se),
-    hi = c(arm1_mean + 1.96 * arm1_se, arm2_mean + 1.96 * arm2_se),
+    lo = c(arm1_mean - t_crit * arm1_se, arm2_mean - t_crit * arm2_se),
+    hi = c(arm1_mean + t_crit * arm1_se, arm2_mean + t_crit * arm2_se),
     stringsAsFactors = FALSE
   )
 
-  arm_colors <- c("Arm 1 (correctly specified)" = unname(PAL["Null"]),
-                   "Arm 2 (misspecified)" = unname(PAL["Biased"]))
+  arm_colors <- c("Baseline (correctly specified)" = unname(PAL["Null"]),
+                   "Misspecified (omitted familial)" = unname(PAL["Biased"]))
 
   ggplot2::ggplot(df_long, ggplot2::aes(x = bias_pp, y = factor(seed), color = arm)) +
     ggplot2::facet_wrap(~ arm, scales = "free_x", ncol = 2) +
@@ -1041,21 +1246,16 @@ plot_mc_uncertainty <- function(mc_result) {
                         linetype = "solid", linewidth = 0.9, color = "gray20") +
     ggplot2::geom_text(data = ci_df, ggplot2::aes(x = mean, y = Inf, label = "mean"),
                        inherit.aes = FALSE, vjust = 1.5, hjust = -0.1,
-                       size = 3.8, color = "gray20", fontface = "italic") +
+                       size = LABEL_SIZE, color = "gray20", fontface = "italic") +
     ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::scale_color_manual(values = arm_colors, guide = "none") +
     ggplot2::labs(
-      title = "Monte Carlo replication: bias is precisely estimated across 20 seeds",
-      subtitle = sprintf(
-        "Arm 2 mean = %+.1f pp, 95%% CI [%+.1f, %+.1f]; Arm 1 mean = %+.1f pp, 95%% CI [%+.1f, %+.1f]",
-        arm2_mean, arm2_mean - 1.96 * arm2_se, arm2_mean + 1.96 * arm2_se,
-        arm1_mean, arm1_mean - 1.96 * arm1_se, arm1_mean + 1.96 * arm1_se
-      ),
+      title = "MC uncertainty",
       x = "Bias (percentage points)",
       y = "Seed"
     ) +
     theme_pub() +
-    ggplot2::theme(axis.text.y = ggplot2::element_text(size = 9))
+    ggplot2::theme(axis.text.y = ggplot2::element_text(size = ggplot2::rel(0.72)))
 }
 
 # ===================================================================
@@ -1079,10 +1279,13 @@ plot_mex_split_hires <- function(hires_df) {
   }))
   agg <- agg[order(agg$frac_heritable), ]
 
+  agg$t_crit <- qt(0.975, df = agg$n_reps - 1)
+  agg$lo95 <- agg$mean_bias_pp - agg$t_crit * agg$se_bias_pp
+  agg$hi95 <- agg$mean_bias_pp + agg$t_crit * agg$se_bias_pp
+
   ggplot2::ggplot(agg, ggplot2::aes(x = frac_heritable, y = mean_bias_pp)) +
     ggplot2::geom_ribbon(
-      ggplot2::aes(ymin = mean_bias_pp - 1.96 * se_bias_pp,
-                   ymax = mean_bias_pp + 1.96 * se_bias_pp),
+      ggplot2::aes(ymin = lo95, ymax = hi95),
       fill = PAL["Biased"], alpha = 0.15) +
     ggplot2::geom_line(color = PAL["Biased"], linewidth = 1) +
     ggplot2::geom_point(color = PAL["Biased"], size = 2.5) +
@@ -1092,11 +1295,8 @@ plot_mex_split_hires <- function(hires_df) {
                         color = PAL["Biased"], alpha = 0.2, size = 1) +
     ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::labs(
-      title = "Bias vs heritable fraction of extrinsic mortality (5-rep average)",
-      subtitle = expression(
-        paste("Ribbon = 95% CI; faint dots = individual replications; ",
-              sigma[gamma], " = 0.40, ", rho, " = 0.4")
-      ),
+      title = "Heritable fraction sensitivity",
+      subtitle = expression(paste(sigma[gamma], " = 0.40, ", rho, " = 0.4")),
       x = expression(f[heritable] == m[inf] / m[ex]),
       y = "Bias (percentage points)"
     ) +
@@ -1124,36 +1324,37 @@ plot_mc_uncertainty_multimodel <- function(mm_result) {
                      MGG = unname(MODEL_PAL["MGG"]),
                      SR = unname(MODEL_PAL["SR"]))
 
-  # Build summary data for point-range
-  summ$ci_lo_arm2 <- summ$arm2_bias_mean - 1.96 * summ$arm2_bias_se
-  summ$ci_hi_arm2 <- summ$arm2_bias_mean + 1.96 * summ$arm2_bias_se
-  summ$ci_lo_arm1 <- summ$arm1_bias_mean - 1.96 * summ$arm1_bias_se
-  summ$ci_hi_arm1 <- summ$arm1_bias_mean + 1.96 * summ$arm1_bias_se
+  # Build summary data for point-range (t-distribution CIs)
+  t_crit <- qt(0.975, df = summ$n_seeds - 1)
+  summ$ci_lo_arm2 <- summ$arm2_bias_mean - t_crit * summ$arm2_bias_se
+  summ$ci_hi_arm2 <- summ$arm2_bias_mean + t_crit * summ$arm2_bias_se
+  summ$ci_lo_arm1 <- summ$arm1_bias_mean - t_crit * summ$arm1_bias_se
+  summ$ci_hi_arm1 <- summ$arm1_bias_mean + t_crit * summ$arm1_bias_se
 
   # Long format for both arms
   df_long <- rbind(
     data.frame(model = df$model, seed = df$seed,
-               arm = "Arm 2 (misspecified)", bias_pp = df$arm2_bias_pp,
+               arm = "Misspecified (omitted familial)", bias_pp = df$arm2_bias_pp,
                stringsAsFactors = FALSE),
     data.frame(model = df$model, seed = df$seed,
-               arm = "Arm 1 (correctly specified)", bias_pp = df$arm1_bias_pp,
+               arm = "Baseline (correctly specified)", bias_pp = df$arm1_bias_pp,
                stringsAsFactors = FALSE)
   )
   df_long$arm <- factor(df_long$arm,
-    levels = c("Arm 1 (correctly specified)", "Arm 2 (misspecified)"))
+    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
 
   summ_long <- rbind(
-    data.frame(model = summ$model, arm = "Arm 2 (misspecified)",
+    data.frame(model = summ$model, arm = "Misspecified (omitted familial)",
                mean_pp = summ$arm2_bias_mean,
                ci_lo = summ$ci_lo_arm2, ci_hi = summ$ci_hi_arm2,
                stringsAsFactors = FALSE),
-    data.frame(model = summ$model, arm = "Arm 1 (correctly specified)",
+    data.frame(model = summ$model, arm = "Baseline (correctly specified)",
                mean_pp = summ$arm1_bias_mean,
                ci_lo = summ$ci_lo_arm1, ci_hi = summ$ci_hi_arm1,
                stringsAsFactors = FALSE)
   )
   summ_long$arm <- factor(summ_long$arm,
-    levels = c("Arm 1 (correctly specified)", "Arm 2 (misspecified)"))
+    levels = c("Baseline (correctly specified)", "Misspecified (omitted familial)"))
 
   ggplot2::ggplot(df_long,
                   ggplot2::aes(x = bias_pp, y = model, color = model)) +
@@ -1164,21 +1365,166 @@ plot_mc_uncertainty_multimodel <- function(mm_result) {
     ggplot2::geom_pointrange(data = summ_long,
       ggplot2::aes(x = mean_pp, y = model,
                    xmin = ci_lo, xmax = ci_hi),
-      size = 0.7, linewidth = 0.9, fatten = 3, color = "gray15") +
+      size = 0.8, linewidth = 0.7, color = "gray15") +
     # Mean value labels
     ggplot2::geom_text(data = summ_long,
       ggplot2::aes(x = mean_pp, y = model,
                    label = sprintf("%+.1f", mean_pp)),
-      vjust = -1.3, size = 3.8, color = "gray25", fontface = "bold") +
+      vjust = -1.3, size = LABEL_SIZE, color = "gray25", fontface = "bold") +
     ggplot2::geom_vline(xintercept = 0, linetype = "dashed", color = "gray60") +
     ggplot2::scale_color_manual(values = model_colors, guide = "none") +
     ggplot2::labs(
-      title = "Misspecification-induced upward bias replicates across all three mortality models",
-      subtitle = "20 independent seeds per model; black point-range = mean \u00b1 95% CI",
+      title = "Multi-model MC uncertainty",
       x = "Bias (percentage points)",
       y = "Mortality model"
     ) +
     theme_pub()
+}
+
+# ===================================================================
+# Bivariate survival model check (main-text + appendix figures)
+# ===================================================================
+
+#' Age-specific dependence ratio R(t) for MZ and DZ twins
+#'
+#' Main-text figure: three lines (True DGP, Misspecified fit, Recovery: two-component refit)
+#' showing R(t) = log(P(T1>t, T2>t) / P(T>t)^2) across age t.
+#' The misspecified model gets the *timing* of concordance wrong even
+#' after matching overall r_MZ; the oracle fix collapses onto the true DGP.
+#'
+#' @param biv_check List from run_bivariate_survival_check()
+#' @return ggplot object (patchwork composite: MZ / DZ panels)
+plot_bivariate_dep_curves <- function(biv_check) {
+  dep <- biv_check$dep_curves
+  dep <- dep[!is.na(dep$R), ]
+
+  dep$model <- factor(dep$model,
+    levels = c("True DGP", "Misspecified fit", "Recovery: two-component refit"))
+
+  model_colors <- c("True DGP"         = "#2166ac",
+                     "Misspecified fit"  = "#b2182b",
+                     "Recovery: two-component refit" = "#ff7f00")
+  model_lty    <- c("True DGP"         = "solid",
+                     "Misspecified fit"  = "dashed",
+                     "Recovery: two-component refit" = "dotdash")
+  model_lw     <- c("True DGP"         = 1.4,
+                     "Misspecified fit"  = 1.4,
+                     "Recovery: two-component refit" = 1.2)
+
+  make_panel <- function(zyg, show_legend = FALSE) {
+    d <- dep[dep$zygosity == zyg, ]
+
+    # --- Zoom inset (ages 75–85) ---
+    d_zoom <- d[d$age >= 75 & d$age <= 85, ]
+    p_zoom <- ggplot2::ggplot(d_zoom,
+                ggplot2::aes(x = age, y = R, color = model, linetype = model,
+                             linewidth = model)) +
+      ggplot2::geom_line() +
+      ggplot2::scale_linewidth_manual(values = model_lw, guide = "none") +
+      ggplot2::scale_color_manual(values = model_colors, guide = "none") +
+      ggplot2::scale_linetype_manual(values = model_lty, guide = "none") +
+      ggplot2::labs(title = "Ages 75\u201385", x = NULL, y = NULL) +
+      theme_pub() +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(size = 9, face = "bold", hjust = 0.5),
+        axis.text = ggplot2::element_text(size = 7),
+        axis.ticks = ggplot2::element_line(linewidth = 0.3),
+        plot.background = ggplot2::element_rect(fill = "white", color = "grey50",
+                                                 linewidth = 0.4),
+        plot.margin = ggplot2::margin(3, 4, 3, 4),
+        panel.grid.minor = ggplot2::element_blank(),
+        legend.position = "none"
+      )
+    inset_grob <- ggplot2::ggplotGrob(p_zoom)
+
+    # --- Main panel ---
+    p <- ggplot2::ggplot(d,
+           ggplot2::aes(x = age, y = R, color = model, linetype = model,
+                        linewidth = model)) +
+      ggplot2::geom_line() +
+      ggplot2::scale_linewidth_manual(values = model_lw, guide = "none") +
+      ggplot2::scale_color_manual(values = model_colors, name = NULL) +
+      ggplot2::scale_linetype_manual(values = model_lty, name = NULL) +
+      ggplot2::geom_hline(yintercept = 0, linetype = "solid",
+                          color = "gray80", linewidth = 0.3) +
+      # Zoom region indicator
+      ggplot2::annotate("rect", xmin = 75, xmax = 85,
+                        ymin = -Inf, ymax = Inf,
+                        alpha = 0.06, fill = "grey50") +
+      ggplot2::labs(
+        title = paste0(zyg, " twins"),
+        x = "Age (years)",
+        y = expression(R(t))
+      ) +
+      # Place inset in left-center (data coords: x 18–58, y upper ~65%)
+      ggplot2::annotation_custom(
+        grob = inset_grob,
+        xmin = 18, xmax = 58, ymin = 0.35 * max(d$R, na.rm = TRUE),
+        ymax = 1.02 * max(d$R, na.rm = TRUE)
+      ) +
+      theme_pub()
+    if (!show_legend) {
+      p <- p + ggplot2::theme(legend.position = "none")
+    } else {
+      p <- p + ggplot2::theme(
+        legend.position = "bottom",
+        legend.key.width = ggplot2::unit(2, "cm"))
+    }
+    p
+  }
+
+  p_mz <- make_panel("MZ", show_legend = FALSE)
+  p_dz <- make_panel("DZ", show_legend = TRUE)
+
+  p_mz / p_dz +
+    patchwork::plot_annotation(
+      title = "Bivariate dependence R(t)",
+      theme = patchwork_title_theme()
+    )
+}
+
+
+#' 2D bivariate surface residuals (appendix figure)
+#'
+#' Shows Delta R(t1, t2) = R_model(t1,t2) - R_true(t1,t2) for MZ twins,
+#' comparing misspecified fit vs oracle fix side by side. Diverging color
+#' scale centered at zero.
+#'
+#' @param biv_check List from run_bivariate_survival_check()
+#' @return ggplot object (patchwork: Misspecified | Recovery: two-component refit)
+plot_bivariate_surface <- function(biv_check) {
+  biv_df <- biv_check$biv_diff
+  if (nrow(biv_df) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  max_abs <- max(abs(biv_df$delta_R), na.rm = TRUE)
+
+  make_panel <- function(model_label, panel_title) {
+    d <- biv_df[biv_df$model == model_label, ]
+    ggplot2::ggplot(d,
+      ggplot2::aes(x = t1, y = t2, fill = delta_R)) +
+      ggplot2::geom_tile() +
+      ggplot2::scale_fill_gradient2(
+        low = "#2166ac", mid = "white", high = "#b2182b",
+        midpoint = 0, limits = c(-max_abs, max_abs),
+        name = expression(Delta * R)
+      ) +
+      ggplot2::coord_fixed() +
+      ggplot2::labs(
+        title = panel_title,
+        x = expression(t[1] ~ "(years)"),
+        y = expression(t[2] ~ "(years)")
+      ) +
+      theme_pub()
+  }
+
+  p_misspec <- make_panel("Misspecified", "Misspecified \u2212 True DGP")
+  p_fix     <- make_panel("Recovery: two-component refit",   "Recovery: two-component refit \u2212 True DGP")
+
+  (p_misspec | p_fix) +
+    patchwork::plot_annotation(
+      title = expression("Bivariate dependence residuals " * Delta * R),
+      theme = patchwork_title_theme()
+    )
 }
 
 #' @param summary_table Main arms table
@@ -1192,6 +1538,85 @@ plot_mc_uncertainty_multimodel <- function(mm_result) {
 #' @param sigma_gamma_bridge Bridge result list
 #' @param mgg_hazard_curves Hazard curves data frame
 #' @param var_decomp Variance decomposition list
+#' Plot MZ extrinsic concordance sensitivity
+#'
+#' @param mz_concordance Data frame from run_mz_concordance_sweep
+#' @return ggplot object
+plot_mz_concordance <- function(mz_concordance, mz_concordance_decoupled = NULL) {
+  # Prepare coupled trace
+  d <- mz_concordance[order(mz_concordance$r_gamma_mz), ]
+  if ("n_reps" %in% names(d)) {
+    d$t_crit <- qt(0.975, df = d$n_reps - 1)
+  } else {
+    d$t_crit <- qt(0.975, df = 19)
+  }
+  d$lo95 <- d$bias_pp - d$t_crit * d$se_pp
+  d$hi95 <- d$bias_pp + d$t_crit * d$se_pp
+  d$Trace <- "Coupled (\u03c1 = 0.4)"
+
+  # Combine traces for legend
+  plot_df <- d
+  if (!is.null(mz_concordance_decoupled) &&
+      "se_pp" %in% names(mz_concordance_decoupled)) {
+    dd <- mz_concordance_decoupled[order(mz_concordance_decoupled$r_gamma_mz), ]
+    if ("n_reps" %in% names(dd)) {
+      dd$t_crit <- qt(0.975, df = dd$n_reps - 1)
+    } else {
+      dd$t_crit <- qt(0.975, df = 19)
+    }
+    dd$lo95 <- dd$bias_pp - dd$t_crit * dd$se_pp
+    dd$hi95 <- dd$bias_pp + dd$t_crit * dd$se_pp
+    dd$Trace <- "Decoupled (\u03c1 = 0)"
+    plot_df <- rbind(plot_df[, names(plot_df) %in% names(dd)],
+                     dd[, names(dd) %in% names(plot_df)])
+  }
+  plot_df$Trace <- factor(plot_df$Trace,
+    levels = c("Coupled (\u03c1 = 0.4)", "Decoupled (\u03c1 = 0)"))
+
+  trace_colors <- c("Coupled (\u03c1 = 0.4)" = "#2166ac",
+                     "Decoupled (\u03c1 = 0)" = "#b2182b")
+  trace_shapes <- c("Coupled (\u03c1 = 0.4)" = 16,
+                     "Decoupled (\u03c1 = 0)" = 17)
+  trace_linetypes <- c("Coupled (\u03c1 = 0.4)" = "solid",
+                        "Decoupled (\u03c1 = 0)" = "dashed")
+
+  ggplot2::ggplot(plot_df, ggplot2::aes(x = r_gamma_mz, y = bias_pp,
+                                         color = Trace, fill = Trace,
+                                         shape = Trace, linetype = Trace)) +
+    # Plausible range band
+    ggplot2::annotate("rect", xmin = 0.7, xmax = 0.9, ymin = -Inf, ymax = Inf,
+                      fill = "#2166ac", alpha = 0.08) +
+    ggplot2::annotate("text", x = 0.8, y = min(plot_df$bias_pp) + 0.5,
+                      label = "Plausible\nrange", size = ANNOT_SIZE, color = "grey40") +
+    # Negative-bias zone
+    ggplot2::annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 0,
+                      fill = "grey92", alpha = 0.4) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+    # CI ribbons
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = lo95, ymax = hi95),
+                         alpha = 0.15, color = NA) +
+    # Lines and points
+    ggplot2::geom_line(linewidth = 1.1) +
+    ggplot2::geom_point(size = 2.5) +
+    # Scales with legend
+    ggplot2::scale_color_manual(values = trace_colors) +
+    ggplot2::scale_fill_manual(values = trace_colors) +
+    ggplot2::scale_shape_manual(values = trace_shapes) +
+    ggplot2::scale_linetype_manual(values = trace_linetypes) +
+    ggplot2::scale_x_continuous(breaks = seq(0, 1, by = 0.2)) +
+    ggplot2::labs(
+      title = "MZ concordance sensitivity",
+      x = expression("Within-MZ extrinsic concordance (" * r[gamma*","*MZ] * ")"),
+      y = "Net bias (pp)",
+      color = NULL, fill = NULL, shape = NULL, linetype = NULL
+    ) +
+    theme_pub() +
+    ggplot2::theme(
+      legend.position = "bottom",
+      legend.margin = ggplot2::margin(t = -5)
+    )
+}
+
 #' @param empirical_alpha_beta Alpha/beta estimation list
 #' @param joint_diagnostic Joint diagnostic list
 #' @param sr_dt_sensitivity SR dt check data frame
@@ -1210,13 +1635,26 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
                                  mc_uncertainty = NULL,
                                  mc_uncertainty_multimodel = NULL,
                                  mex_split_hires = NULL,
+                                 bivariate_check = NULL,
+                                 mz_concordance = NULL,
+                                 mz_concordance_decoupled = NULL,
+                                 bridge_uncertainty = NULL,
+                                 main_arms_replicated = NULL,
+                                 robustness_cutoff0 = NULL,
                                  outdir = "figures") {
   paths <- list()
 
-  # Main manuscript figures
-  paths$main_arms <- save_figure(
-    plot_main_arms(summary_table),
-    "fig1_main_arms.png", width = 10, height = 6, outdir = outdir)
+  # Main manuscript figures (replicated means with CIs)
+  if (!is.null(main_arms_replicated)) {
+    paths$main_arms <- save_figure(
+      plot_main_arms(main_arms_replicated, robustness_cutoff0),
+      "fig1_main_arms.png", width = 10, height = 6, outdir = outdir)
+  } else {
+    # Fallback to legacy single-seed plot
+    paths$main_arms <- save_figure(
+      plot_main_arms_legacy(summary_table),
+      "fig1_main_arms.png", width = 10, height = 6, outdir = outdir)
+  }
 
   paths$sweep <- save_figure(
     plot_sweep_heatmap(sweep_results),
@@ -1253,12 +1691,12 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
 
   paths$mgg_hazard <- save_figure(
     plot_mgg_hazard_curves(mgg_hazard_curves),
-    "diag_mgg_hazard_curves.png", width = 12, height = 6, outdir = outdir)
+    "diag_mgg_hazard_curves.png", width = 10, height = 6, outdir = outdir)
 
   if (!is.null(mgg_param_comparison)) {
     paths$mgg_param <- save_figure(
       plot_mgg_param_comparison(mgg_param_comparison),
-      "fig_mgg_parameterization.png", width = 16, height = 6, outdir = outdir)
+      "fig_mgg_parameterization.png", width = 14, height = 5.5, outdir = outdir)
   }
 
   paths$var_decomp <- save_figure(
@@ -1289,7 +1727,7 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
   if (!is.null(mc_uncertainty)) {
     paths$mc_uncertainty <- save_figure(
       plot_mc_uncertainty(mc_uncertainty),
-      "fig_b3_mc_uncertainty.png", width = 12, height = 7, outdir = outdir)
+      "fig_b3_mc_uncertainty.png", width = 10, height = 6.5, outdir = outdir)
   }
 
   if (!is.null(mc_uncertainty_multimodel)) {
@@ -1302,6 +1740,17 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
     paths$mex_split_hires <- save_figure(
       plot_mex_split_hires(mex_split_hires),
       "fig_b4_mex_split_hires.png", width = 8, height = 5.5, outdir = outdir)
+  }
+
+  # Bivariate survival model check
+  if (!is.null(bivariate_check)) {
+    paths$bivariate_dep <- save_figure(
+      plot_bivariate_dep_curves(bivariate_check),
+      "fig_bivariate_dep_curves.png", width = 9, height = 10, outdir = outdir)
+
+    paths$bivariate_surface <- save_figure(
+      plot_bivariate_surface(bivariate_check),
+      "fig_bivariate_surface.png", width = 11, height = 6, outdir = outdir)
   }
 
   # Multi-model comparison figures (if model_controls available)
@@ -1317,6 +1766,13 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
     paths$pleiotropy_multimodel <- save_figure(
       plot_pleiotropy_multimodel(controls_table, model_controls),
       "fig8_pleiotropy_multimodel.png", width = 7, height = 5.5, outdir = outdir)
+  }
+
+  # MZ concordance sweep (with optional decoupled trace)
+  if (!is.null(mz_concordance)) {
+    paths$mz_concordance <- save_figure(
+      plot_mz_concordance(mz_concordance, mz_concordance_decoupled),
+      "fig_mz_concordance.png", width = 7, height = 5, outdir = outdir)
   }
 
   paths

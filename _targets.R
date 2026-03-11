@@ -72,7 +72,7 @@ list(
   tar_target(arm2_corr, sim_twin_h2(sigma_theta_fit, 0,
     sigma_gamma = 0, rng_seed = PARAMS$MASTER_SEED + 400L)),
 
-  # --- Control A: Non-heritable extrinsic ---
+  # --- Control: nonfamilial extrinsic ---
   tar_target(ctrl_a_obs, sim_twin_h2(sigma_theta_true, PARAMS$M_EX_HIST,
     sigma_gamma = PARAMS$SIGMA_GAMMA_DEF, rho = 0,
     gamma_heritable = FALSE, individual_ext = TRUE,
@@ -84,7 +84,7 @@ list(
   tar_target(ctrl_a_corr, sim_twin_h2(sigma_theta_ctrl_a, 0,
     sigma_gamma = 0, rng_seed = PARAMS$MASTER_SEED + 600L)),
 
-  # --- Control B: Vanishing m_ex ---
+  # --- Control: vanishing extrinsic ---
   tar_target(ctrl_b_obs, sim_twin_h2(sigma_theta_true, PARAMS$M_EX_TINY,
     sigma_gamma = PARAMS$SIGMA_GAMMA_DEF, rho = PARAMS$RHO_DEF,
     gamma_heritable = TRUE, individual_ext = TRUE,
@@ -96,11 +96,15 @@ list(
   tar_target(ctrl_b_corr, sim_twin_h2(sigma_theta_ctrl_b, 0,
     sigma_gamma = 0, rng_seed = PARAMS$MASTER_SEED + 800L)),
 
-  # --- Arm 3: Hamilton ---
+  # --- Comparator: Hamilton ---
   tar_target(arm3_hamilton, run_hamilton_arm(PARAMS)),
 
-  # --- Oracle fix arm: correctly specified two-component model ---
+  # --- Recovery: two-component refit ---
   tar_target(oracle_fix, run_oracle_fix_arm(sigma_theta_true, PARAMS)),
+
+  # --- Replicated main arms (50 seeds) ---
+  tar_target(main_arms_replicated,
+    run_main_arms_replicated(sigma_theta_true, oracle, PARAMS)),
 
   # --- Multi-target calibration robustness ---
   tar_target(multi_target_arm,
@@ -239,9 +243,27 @@ list(
   tar_target(mc_uncertainty_multimodel,
     combine_mc_uncertainty_multimodel(mc_unc_gm, mc_unc_mgg, mc_unc_sr)),
 
-  # B4: High-replication m_ex split (5 reps per fraction level)
+  # B4: High-replication m_ex split (20 reps per fraction level)
   tar_target(mex_split_hires,
-    run_mex_split_hires(sigma_theta_true, oracle, PARAMS, n_reps = 5L)),
+    run_mex_split_hires(sigma_theta_true, oracle, PARAMS, n_reps = 20L)),
+
+  # B5: Bivariate survival model check
+  tar_target(bivariate_check,
+    run_bivariate_survival_check(
+      sigma_theta_true, sigma_theta_fit,
+      oracle_fix$sigma_theta_fix, PARAMS)),
+
+  # B6: MZ extrinsic concordance sensitivity (12 levels × 20 reps)
+  tar_target(mz_concordance,
+    run_mz_concordance_sweep(sigma_theta_true, oracle, PARAMS)),
+
+  # B6b: Decoupled concordance sweep (rho=0, isolates concordance from pleiotropy)
+  tar_target(mz_concordance_decoupled,
+    run_mz_concordance_sweep(sigma_theta_true, oracle, PARAMS, rho = 0)),
+
+  # B7: Bridge uncertainty quantification (Obel CI × 10 seeds)
+  tar_target(bridge_uncertainty,
+    run_bridge_uncertainty(sigma_theta_true, PARAMS, n_seeds = 10L)),
 
   # =================================================================
   # Stage 9: Tables
@@ -273,14 +295,19 @@ list(
     extended_sigma_gamma = extended_sigma_gamma,
     mc_uncertainty = mc_uncertainty,
     mc_uncertainty_multimodel = mc_uncertainty_multimodel,
-    mex_split_hires = mex_split_hires)),
+    mex_split_hires = mex_split_hires,
+    bivariate_check = bivariate_check,
+    mz_concordance = mz_concordance,
+    mz_concordance_decoupled = mz_concordance_decoupled,
+    bridge_uncertainty = bridge_uncertainty,
+    main_arms_replicated = main_arms_replicated)),
 
   tar_target(controls_table, data.frame(
     Control = c(
-      "Arm 2 reference",
-      "Pleiotropy isolation (rho=0)",
-      "Irrelevant trait (zeta)",
-      "Vanishing m_ex (ctrl B)"
+      "Misspecified (reference)",
+      "Check: pleiotropy only (ρ=0)",
+      "Control: irrelevant trait",
+      "Control: vanishing extrinsic"
     ),
     bias = c(
       arm2_corr$h2 - oracle$h2,
@@ -336,6 +363,12 @@ list(
     extended_sigma_gamma = extended_sigma_gamma,
     mc_uncertainty = mc_uncertainty,
     mc_uncertainty_multimodel = mc_uncertainty_multimodel,
-    mex_split_hires = mex_split_hires
+    mex_split_hires = mex_split_hires,
+    bivariate_check = bivariate_check,
+    mz_concordance = mz_concordance,
+    mz_concordance_decoupled = mz_concordance_decoupled,
+    bridge_uncertainty = bridge_uncertainty,
+    main_arms_replicated = main_arms_replicated,
+    robustness_cutoff0 = robustness_cutoff0
   ))
 )

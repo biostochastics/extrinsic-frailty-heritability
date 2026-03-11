@@ -269,35 +269,183 @@ sim_twin_h2_split_mex <- function(sigma_theta, m_inf, m_other,
 #' @param sigma_theta_true True sigma_theta
 #' @param params Parameter list
 #' @return Data frame with rho, bias, bias_pp
-run_negative_rho_sensitivity <- function(sigma_theta_true, params) {
+run_negative_rho_sensitivity <- function(sigma_theta_true, params,
+                                          n_reps = params$N_REPS_SWEEP) {
   rho_grid <- seq(-0.6, 0.8, by = 0.05)
   oracle <- sim_twin_h2(sigma_theta_true, 0, sigma_gamma = 0,
                          rng_seed = params$MASTER_SEED)
 
-  results <- lapply(rho_grid, function(rho_val) {
+  results <- lapply(seq_along(rho_grid), function(i) {
+    rho_val <- rho_grid[i]
     seed_base <- params$MASTER_SEED + 60000L + round((rho_val + 1) * 1000)
 
-    obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
-      sigma_gamma = params$SIGMA_GAMMA_DEF, rho = rho_val,
-      gamma_heritable = TRUE, individual_ext = TRUE,
-      rng_seed = seed_base
-    )
+    rep_biases <- vapply(seq_len(n_reps), function(r) {
+      sb <- seed_base + r * 100000L
+      obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
+        sigma_gamma = params$SIGMA_GAMMA_DEF, rho = rho_val,
+        gamma_heritable = TRUE, individual_ext = TRUE,
+        rng_seed = sb)
+      sigma_fit <- calibrate_sigma_theta(obs$r_mz, params$M_EX_HIST)
+      corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
+        rng_seed = sb + 5000L)
+      100 * (corr$h2 - oracle$h2)
+    }, numeric(1))
 
-    sigma_fit <- calibrate_sigma_theta(obs$r_mz, params$M_EX_HIST)
-
-    corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
-      rng_seed = seed_base + 5000L
-    )
-
+    m <- mean(rep_biases); se <- sd(rep_biases) / sqrt(n_reps)
+    t_crit <- qt(0.975, df = n_reps - 1)
     data.frame(
       rho = rho_val,
-      bias = corr$h2 - oracle$h2,
-      bias_pp = 100 * (corr$h2 - oracle$h2),
-      sigma_fit = sigma_fit,
-      sigma_infl_pct = 100 * (sigma_fit / sigma_theta_true - 1),
+      bias_pp = m,
+      se_pp = se,
+      lo95_pp = m - t_crit * se,
+      hi95_pp = m + t_crit * se,
       stringsAsFactors = FALSE
     )
   })
 
   do.call(rbind, results)
+}
+
+# ===========================================================================
+# MZ extrinsic concordance sensitivity sweep
+# ===========================================================================
+
+#' Sweep within-MZ gamma concordance from 0 to 1
+#'
+#' Decomposes extrinsic frailty into a genetic component (shared at r_g)
+#' and individual-specific exposure noise. gamma_concordance is the fraction
+#' of gamma variance that is genetically shared, so
+#' Corr(gamma_1, gamma_2) = gamma_concordance for MZ twins (0.5× for DZ).
+#'
+#' NOTE: Reducing gamma_concordance also reduces the effective within-person
+#' pleiotropy Corr(theta, gamma_total) = sqrt(gamma_concordance) * rho,
+#' because only the genetic component of gamma is pleiotropic with theta.
+#' This is the physically correct model: if only a fraction of extrinsic
+#' susceptibility is genetic, both twin concordance AND pleiotropy decrease.
+#'
+#' @param sigma_theta_true True sigma_theta from oracle calibration
+#' @param oracle Oracle simulation result
+#' @param params Parameter list
+#' @param rho Pleiotropy correlation (default: params$RHO_DEF; set 0 for decoupled)
+#' @param n_reps Number of replications per concordance level
+#' @return Data frame with r_gamma_mz, bias_pp, se_pp columns
+run_mz_concordance_sweep <- function(sigma_theta_true, oracle, params,
+                                     rho = params$RHO_DEF,
+                                     n_reps = params$N_REPS_SWEEP) {
+  r_gamma_grid <- sort(unique(c(seq(0, 1, by = 0.1), 0.85)))
+
+  results <- lapply(r_gamma_grid, function(r_gam) {
+    biases <- vapply(seq_len(n_reps), function(rep) {
+      seed <- params$MASTER_SEED + 90000L + round(r_gam * 1000) + rep * 7L
+
+      obs <- sim_twin_h2_concordance(
+        sigma_theta_true,
+        m_ex = params$M_EX_HIST,
+        sigma_gamma = params$SIGMA_GAMMA_DEF,
+        rho = rho,
+        gamma_concordance = r_gam,
+        rng_seed = seed
+      )
+
+      sigma_fit <- calibrate_sigma_theta(obs$r_mz, params$M_EX_HIST)
+
+      corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
+        rng_seed = seed + 50000L
+      )
+      corr$h2 - oracle$h2
+    }, numeric(1))
+
+    data.frame(
+      r_gamma_mz = r_gam,
+      bias_mean = mean(biases),
+      bias_se = sd(biases) / sqrt(n_reps),
+      bias_pp = 100 * mean(biases),
+      se_pp = 100 * sd(biases) / sqrt(n_reps),
+      n_reps = n_reps,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  do.call(rbind, results)
+}
+
+# ===========================================================================
+# Bridge uncertainty quantification
+# ===========================================================================
+
+#' Run sigma_gamma bridge with MC uncertainty + Obel CI targets
+#'
+#' Wraps the bridge computation over multiple seeds and inverts at
+#' Obel et al.'s central estimate (0.40) plus CI endpoints (0.12, 0.50).
+#'
+#' @param sigma_theta_true True sigma_theta from oracle calibration
+#' @param params Parameter list
+#' @param n_seeds Number of independent seeds
+#' @return List with bridge_table and per-target summaries
+run_bridge_uncertainty <- function(sigma_theta_true, params, n_seeds = 10L) {
+  sigma_gamma_grid <- seq(0.1, 1.5, by = 0.025)
+  obel_targets <- c(lower = 0.12, central = 0.40, upper = 0.50)
+
+  seed_results <- lapply(seq_len(n_seeds), function(s) {
+    base_seed <- params$MASTER_SEED + 70000L + s * 100000L
+
+    h2_vals <- vapply(sigma_gamma_grid, function(sg) {
+      compute_infection_death_h2(
+        sigma_gamma = sg,
+        rho = params$RHO_DEF,
+        sigma_theta = sigma_theta_true,
+        m_ex = params$M_EX_HIST,
+        n_pairs = params$N_PAIRS,
+        cutoff = params$CUTOFF_AGE,
+        seed = base_seed + round(sg * 10000)
+      )$h2_L
+    }, numeric(1))
+
+    # Invert via first sign-change bracket (robust to MC noise)
+    bridges <- vapply(obel_targets, function(target) {
+      diffs <- h2_vals - target
+      sign_changes <- which(diff(sign(diffs)) != 0)
+      if (length(sign_changes) == 0) return(NA_real_)
+      # Use first crossing (lowest sigma_gamma)
+      i <- sign_changes[1]
+      # Linear interpolation within bracket
+      w <- (target - h2_vals[i]) / (h2_vals[i + 1] - h2_vals[i])
+      sigma_gamma_grid[i] + w * (sigma_gamma_grid[i + 1] - sigma_gamma_grid[i])
+    }, numeric(1))
+
+    data.frame(
+      seed = s,
+      target_h2_L = obel_targets,
+      target_label = names(obel_targets),
+      bridge_sigma_gamma = bridges,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  all_bridges <- do.call(rbind, seed_results)
+
+  summary_df <- do.call(rbind, lapply(names(obel_targets), function(lab) {
+    vals <- all_bridges$bridge_sigma_gamma[all_bridges$target_label == lab]
+    vals <- vals[!is.na(vals)]
+    nv <- length(vals)
+    se <- if (nv > 1) sd(vals) / sqrt(nv) else NA_real_
+    data.frame(
+      target_label = lab,
+      target_h2_L = obel_targets[lab],
+      bridge_mean = if (nv > 0) mean(vals) else NA_real_,
+      bridge_se = se,
+      bridge_lo95 = if (nv > 1) mean(vals) - qt(0.975, df = nv - 1) * se else NA_real_,
+      bridge_hi95 = if (nv > 1) mean(vals) + qt(0.975, df = nv - 1) * se else NA_real_,
+      n_valid = nv,
+      all_above_065 = if (nv > 0) all(vals > 0.65) else NA,
+      stringsAsFactors = FALSE
+    )
+  }))
+
+  list(
+    all_bridges = all_bridges,
+    summary = summary_df,
+    obel_targets = obel_targets,
+    n_seeds = n_seeds
+  )
 }

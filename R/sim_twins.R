@@ -196,6 +196,93 @@ sim_twin_h2 <- function(sigma_theta, m_ex, sigma_gamma = 0, rho = 0,
   )
 }
 
+#' Simulate twin h² with variable within-MZ gamma concordance
+#'
+#' Like sim_twin_h2, but decomposes gamma into genetic + exposure components.
+#' gamma_concordance is the fraction of gamma variance that is genetic
+#' (shared at r_g). The exposure component is always independent.
+#'
+#' @param sigma_theta SD of log-Gompertz intercept
+#' @param m_ex Extrinsic hazard rate
+#' @param sigma_gamma SD of log-extrinsic frailty
+#' @param rho Pleiotropy correlation (between theta and genetic gamma)
+#' @param gamma_concordance Fraction of gamma variance that is genetic [0,1]
+#' @param cutoff Minimum age for inclusion
+#' @param n Number of twin pairs
+#' @param rng_seed RNG seed
+#' @return List with r_mz, r_dz, h2
+sim_twin_h2_concordance <- function(sigma_theta, m_ex, sigma_gamma = 0.40,
+                                    rho = 0.4, gamma_concordance = 1.0,
+                                    cutoff = PARAMS$CUTOFF_AGE,
+                                    n = PARAMS$N_PAIRS,
+                                    rng_seed = NULL) {
+  stopifnot(is.finite(gamma_concordance),
+            gamma_concordance >= 0, gamma_concordance <= 1)
+  if (!is.null(rng_seed)) set.seed(rng_seed)
+
+  b <- PARAMS$B_GOMP
+  t_max <- PARAMS$T_MAX
+  shift <- sigma_gamma^2 / 2
+
+  # Helper: generate twin params with variable gamma concordance
+  gen_concordance <- function(r_g) {
+    # Genetic pleiotropy acts only on the genetic part of gamma
+    # Effective within-person Corr(theta, gamma_total) = sqrt(h) * rho
+    h <- gamma_concordance
+    Sigma_gen <- matrix(c(1, rho, rho, 1), 2, 2)
+    G1 <- MASS::mvrnorm(n, mu = c(0, 0), Sigma = Sigma_gen)
+    g_theta1 <- G1[, 1]
+    g_gamma_gen1 <- G1[, 2]
+
+    Z <- MASS::mvrnorm(n, mu = c(0, 0), Sigma = Sigma_gen)
+    g_theta2 <- r_g * g_theta1 + sqrt(1 - r_g^2) * Z[, 1]
+    g_gamma_gen2 <- r_g * g_gamma_gen1 + sqrt(1 - r_g^2) * Z[, 2]
+
+    # Individual exposure noise (always independent)
+    e1 <- rnorm(n)
+    e2 <- rnorm(n)
+
+    # Total gamma: sqrt(h)*genetic + sqrt(1-h)*exposure
+    g_gamma1 <- sqrt(h) * g_gamma_gen1 + sqrt(1 - h) * e1
+    g_gamma2 <- sqrt(h) * g_gamma_gen2 + sqrt(1 - h) * e2
+
+    theta1 <- PARAMS$MU_THETA + sigma_theta * g_theta1
+    theta2 <- PARAMS$MU_THETA + sigma_theta * g_theta2
+    gamma1 <- sigma_gamma * g_gamma1
+    gamma2 <- sigma_gamma * g_gamma2
+
+    list(theta1 = theta1, theta2 = theta2, gamma1 = gamma1, gamma2 = gamma2)
+  }
+
+  # MZ
+  p_mz <- gen_concordance(1.0)
+  c_mz1 <- m_ex * exp(p_mz$gamma1 - shift)
+  c_mz2 <- m_ex * exp(p_mz$gamma2 - shift)
+  L_mz1 <- sim_lifespan_gm(p_mz$theta1, b, c_mz1, t_max)
+  L_mz2 <- sim_lifespan_gm(p_mz$theta2, b, c_mz2, t_max)
+
+  # DZ
+  p_dz <- gen_concordance(0.5)
+  c_dz1 <- m_ex * exp(p_dz$gamma1 - shift)
+  c_dz2 <- m_ex * exp(p_dz$gamma2 - shift)
+  L_dz1 <- sim_lifespan_gm(p_dz$theta1, b, c_dz1, t_max)
+  L_dz2 <- sim_lifespan_gm(p_dz$theta2, b, c_dz2, t_max)
+
+  # Cutoff
+  keep_mz <- (L_mz1 > cutoff) & (L_mz2 > cutoff)
+  keep_dz <- (L_dz1 > cutoff) & (L_dz2 > cutoff)
+
+  if (sum(keep_mz) < 100 || sum(keep_dz) < 100) {
+    warning("Very few pairs survived cutoff in concordance sim. Results may be unstable.")
+  }
+
+  r_mz <- cor(L_mz1[keep_mz], L_mz2[keep_mz])
+  r_dz <- cor(L_dz1[keep_dz], L_dz2[keep_dz])
+
+  list(r_mz = r_mz, r_dz = r_dz, h2 = 2 * (r_mz - r_dz),
+       n_mz = sum(keep_mz), n_dz = sum(keep_dz))
+}
+
 #' Simulate twin h² for MGG model
 #'
 #' @param sigma_q SD of scale parameter q
