@@ -14,7 +14,8 @@ tar_source("R")
 # Parallel execution via crew
 tar_option_set(
   packages = c("MASS", "ggplot2", "patchwork", "lamW",
-               "ggpubr", "ggthemes", "viridis", "mvtnorm", "scales", "Rcpp"),
+               "ggpubr", "ggthemes", "viridis", "mvtnorm", "scales", "Rcpp",
+               "OpenMx"),
   controller = crew::crew_controller_local(workers = 10L),
   deployment = "worker"
 )
@@ -304,8 +305,8 @@ list(
 
   tar_target(controls_table, data.frame(
     Control = c(
-      "Misspecified (reference)",
-      "Check: pleiotropy only (ρ=0)",
+      "Misspecified: omitted familial extrinsic",
+      "Check: pleiotropy only",
       "Control: irrelevant trait",
       "Control: vanishing extrinsic"
     ),
@@ -370,5 +371,79 @@ list(
     bridge_uncertainty = bridge_uncertainty,
     main_arms_replicated = main_arms_replicated,
     robustness_cutoff0 = robustness_cutoff0
-  ))
+  )),
+
+  # =================================================================
+  # Stage 11: Alternative Estimands
+  # =================================================================
+  # Primary estimand: σ_θ inflation and variance component reporting
+  # Secondary: bivariate survival surface, ACE decomposition,
+  # age-specific dependence. Standalone analyses per reviewer request.
+  # =================================================================
+
+  # --- 11a: Variance component inflation (primary estimand) ---
+  tar_target(variance_components,
+    build_variance_components_table(
+      sigma_theta_true, sigma_theta_arm1, sigma_theta_fit,
+      oracle_fix$sigma_theta_fix,
+      oracle, arm1_corr, arm2_corr, oracle_fix,
+      mgg_validation, sr_validation)),
+
+  tar_target(sweep_variance_decomp,
+    compute_sweep_variance_decomposition(sweep_results, sigma_theta_true)),
+
+  tar_target(variance_component_uq,
+    run_variance_component_uncertainty(sigma_theta_true, PARAMS,
+                                       n_seeds = 20L)),
+
+  # --- 11b: Bivariate survival surface analysis ---
+  tar_target(bivariate_surface,
+    run_bivariate_surface_analysis(
+      sigma_theta_true, sigma_theta_fit,
+      oracle_fix$sigma_theta_fix, PARAMS)),
+
+  # --- 11c: ACE twin decomposition ---
+  tar_target(ace_analysis,
+    run_ace_analysis(
+      sigma_theta_true, sigma_theta_fit,
+      oracle_fix$sigma_theta_fix, PARAMS)),
+
+  # --- 11d: Age-specific twin dependence ---
+  tar_target(age_dependence,
+    run_age_dependence_analysis(
+      sigma_theta_true, sigma_theta_fit,
+      oracle_fix$sigma_theta_fix, PARAMS)),
+
+  # --- 11e: Export (standalone, separate from existing pipeline) ---
+  tar_target(estimand_tables,
+    write_estimand_tables(
+      variance_components = variance_components,
+      sweep_variance_decomp = sweep_variance_decomp,
+      variance_component_uq = variance_component_uq,
+      bivariate_surface = bivariate_surface,
+      ace_analysis = ace_analysis,
+      age_dependence = age_dependence)),
+
+  # --- 11f: Figures ---
+  tar_target(estimand_figures,
+    generate_estimand_figures(
+      variance_components = variance_components,
+      sweep_variance_decomp = sweep_variance_decomp,
+      variance_component_uq = variance_component_uq,
+      bivariate_surface = bivariate_surface,
+      ace_analysis = ace_analysis,
+      age_dependence = age_dependence,
+      sigma_theta_true = sigma_theta_true)),
+
+  # =================================================================
+  # Stage 12: ML vs moment estimation comparison
+  # =================================================================
+  tar_target(ml_experiment,
+    run_ml_experiment(sigma_theta_true)),
+
+  tar_target(ml_figures,
+    generate_ml_figures(ml_experiment)),
+
+  tar_target(ml_export,
+    export_ml_results(ml_experiment))
 )

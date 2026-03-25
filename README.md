@@ -1,92 +1,89 @@
-# Heritable extrinsic susceptibility can inflate inferred intrinsic lifespan heritability
+# Omitted familial extrinsic risk inflates inferred intrinsic lifespan heritability
 
-Simulation pipeline and manuscript demonstrating that **omitted familial extrinsic frailty** biases calibrate-then-extrapolate intrinsic heritability estimates upward by ~9-10 percentage points.
+Simulation pipeline demonstrating that **omitted familial extrinsic frailty** biases calibrate-then-extrapolate intrinsic heritability estimates upward. Response to Shenhar et al. (2026, *Science*) and Hamilton (2026, *medRxiv*).
 
 ## Summary
 
-[Shenhar et al. (2026, *Science*)](https://doi.org/10.1126/science.adz1187) estimate that intrinsic human lifespan heritability is ~50% by calibrating parametric mortality models to Scandinavian twin data and extrapolating to a counterfactual world without extrinsic mortality. [Hamilton (2026, *medRxiv*)](https://doi.org/10.1101/2026.01.15.26300001) argues that heritable infection mortality creates collider bias through concordant-survivor conditioning. However, Shenhar's procedure does not remove individuals --- it parametrically sets extrinsic hazard to zero.
+[Shenhar et al. (2026, *Science*)](https://doi.org/10.1126/science.adz1187) estimate ~50% intrinsic human lifespan heritability by calibrating parametric mortality models to Scandinavian twin data and extrapolating to a counterfactual world without extrinsic mortality. We identify a bias mechanism specific to their calibrate-then-extrapolate approach: if susceptibility to extrinsic mortality is familial (heritable) and this heterogeneity is not modeled, the single-parameter calibration absorbs extrinsic genetic variance into the intrinsic frailty parameter — omitted-variable bias at the estimation step, before any extrapolation occurs.
 
-We identify a distinct bias mechanism specific to Shenhar's calibrate-then-extrapolate approach: if susceptibility to extrinsic mortality is familial (including heritable) and this heterogeneity is not modeled, the single-parameter calibration absorbs extrinsic genetic variance into the intrinsic parameter --- omitted-variable bias at the estimation step, before any extrapolation occurs.
+### Two-layer vulnerability
 
-### Headline result (Gompertz-Makeham, 50-seed Monte Carlo)
+The bias operates at two separable levels:
 
-| Condition | Bias (pp) | 95% CI |
-|---|---|---|
-| **Misspecified** (familial extrinsic omitted) | **+9.2** | 8.7 to 9.7 |
-| Correctly specified (baseline) | -0.4 | -0.9 to 0.1 |
+1. **Model-class problem:** Even full maximum likelihood estimation within the misspecified one-component model inflates sigma_theta by +3–5%, because the model has no parameter for the omitted extrinsic component.
+2. **Estimator-choice problem:** Shenhar's moment-based calibration (matching r_MZ) amplifies the inflation ~7×, producing +21–42% inflation, because the omitted pathway loads directly into twin dependence and the calibrator has no marginal-survival counterweight.
 
-The fitted intrinsic frailty dispersion is inflated by ~21%, corresponding to ~9-10 pp of upward bias in inferred intrinsic h². The correctly specified baseline is indistinguishable from zero.
+### Primary estimand: sigma_theta inflation
 
-### Single-seed decomposition (illustrative)
+| Model | sigma\_true | sigma\_fit | sigma inflation | Falconer bias (pp) |
+|---|---|---|---|---|
+| **Gompertz-Makeham** | 1.259 | 1.537 | **+22.1%** | +7.6 |
+| MGG | 0.270 | 0.318 | +17.9% | +9.2 |
+| SR | 3.570 | 4.073 | +14.1% | +5.7 |
+| Recovery (GM) | 1.259 | 1.219 | -3.2% | -3.3 |
 
-| Condition | sigma\_theta,fit | h² | Bias (pp) |
+Monte Carlo uncertainty (20 seeds): sigma_theta inflation +22.1 +/- 0.3% SE (95% CI: 21.5–22.7%).
+
+### ML vs moment calibration
+
+| Condition | ML inflation | Moment inflation | Ratio |
 |---|---|---|---|
-| Oracle (true intrinsic) | 1.259 | 0.510 | --- |
-| Correctly specified | 1.220 | 0.472 | -3.7 |
-| **Misspecified** (sigma\_gamma=0.40, rho=0.4) | **1.537** | **0.586** | **+7.6** |
-| Non-heritable extrinsic | 1.259 | 0.478 | -3.1 |
-| Vanishing m\_ex | 1.267 | 0.500 | -0.9 |
-| Irrelevant trait | 1.264 | 0.502 | -0.7 |
-| Two-component recovery | 1.219 | 0.476 | -3.3 |
-| Hamilton conditioning | N/A | 0.427 | -8.2 |
+| Correctly specified (sigma\_gamma=0) | +0.0% | ~0% | — |
+| Default (sigma\_gamma=0.40, rho=0.4) | **+3.0%** | **+21.3%** | **~7×** |
+| No pleiotropy (rho=0) | +0.3% | +8.8% | ~29× |
+| Extreme (sigma\_gamma=0.65) | +4.8% | +41.8% | ~9× |
 
-The net +7.6 pp decomposes into +11.4 pp inflation (omitted-variable absorption) partially offset by -3.7 pp attenuation (extrinsic noise).
-
-### Cross-model replication (20 seeds per model)
-
-| Model | Misspecified bias | 95% CI lower bound |
-|---|---|---|
-| Gompertz-Makeham | +9.2 +/- 0.3 pp | > 8.2 pp |
-| Makeham-Gamma-Gompertz | +10.4 +/- 0.5 pp | > 8.2 pp |
-| Saturating-Removal | +9.2 +/- 0.5 pp | > 8.2 pp |
-
-All three mortality-model families show the same phenomenon with all 95% CIs above +8.2 pp.
+Under misspecification, ML converges to a different pseudo-true parameter than moment calibration (White 1982): ML minimizes KL divergence over the full bivariate density, moment calibration reproduces r_MZ. The omitted extrinsic pathway loads into twin dependence, so ML — partially regularized by marginal survival structure — absorbs far less of the omitted variance.
 
 ### Anchored sensitivity regime
 
-Parameters anchored to independent immunogenetic evidence: sigma\_gamma from twin heritability of infection mortality ([Obel et al. 2010](https://doi.org/10.1093/aje/kwq037)) and rho from LDSC genetic correlations between infection severity and longevity ([Qiu et al. 2025](https://doi.org/10.1186/s12967-024-05932-y)).
+Parameters anchored to independent immunogenetic evidence:
 
 | Region | Bias range (pp) | Mean |
 |---|---|---|
-| Anchored regime (sigma\_gamma in [0.30, 0.65], rho in [0.20, 0.50]) | +2.8 to +18.9 | +9 |
+| Anchored (sigma\_gamma in [0.30, 0.65], rho in [0.20, 0.50]) | +2.8 to +18.9 | +9 |
 
-### Robustness
+### Evidence hierarchy
 
-- **Functional forms**: Log-normal (+8.1 pp), additive (+8.7 pp), gamma (+7.6 pp) extrinsic frailty constructions (10 seeds each)
-- **Sign reversal**: Negative intrinsic-extrinsic genetic correlation reverses the bias direction (29 rho values x 20 seeds, three model families)
-- **Bivariate diagnostic**: Misspecification produces structured age-specific misfit in twin dependence (IAE ratio 4.7x), removed by correct specification
-- **Multi-target calibration**: Richer targets reduce but do not eliminate inflation (+10.0 pp -> +6.4 pp)
+**Tier 1 — Core argument:** sigma_theta inflation (+22.1%), two-component decomposition and recovery (-3.2%), variance absorption diagnostic (R² = 0.988), independence from survival conditioning.
+
+**Tier 2 — Structural fingerprints:** Bivariate survival surface misfit (ISE 48×), age-specific conditional correlation (peak Delta r = 0.048 at age 80), ACE decomposition (C ~ 0; bias loads onto A, not shared environment).
+
+**Tier 3 — Scope, specificity, falsifiability:** Negative controls (3 necessary conditions), model generality (GM/MGG/SR), dose-response, anchored quantification, sign reversal under negative rho (confirmed in all 3 models), ML vs moment comparison.
 
 ## Repository structure
 
 ```
-├── writeup-biorxiv-v3.pdf     # Compiled manuscript
-├── writeup-biorxiv-v3.typ     # Typst source (dynamic data binding from scalars.json)
-├── proof-draft.md             # Formal proof (Appendix B source)
-├── _targets.R                 # Pipeline definition (194 targets, static branching)
+├── _targets.R                 # Pipeline definition (210 targets, static branching)
 ├── R/
 │   ├── params.R               # Single source of truth for all parameters
 │   ├── sim_core.R             # Lambert W GM solver, hybrid MGG solver, SR Euler-Maruyama
-│   ├── sim_twins.R            # Twin parameter generation, sim_twin_h2()
+│   ├── sim_twins.R            # Twin parameter generation, sim_twin_h2(), sim_twin_lifespans()
 │   ├── calibrate.R            # Stochastic bisection (CRN), oracle, joint, multi-target, UQ
+│   ├── ml_estimation.R        # Full bivariate ML (GH quadrature, truncation/censoring)
 │   ├── utils.R                # Sweep cells, Hamilton arm, model analysis, control sweeps
 │   ├── anchors.R              # sigma_gamma bridge, tetrachoric, m_ex split, negative rho
 │   ├── diagnostics.R          # Variance decomposition, joint r_MZ/r_DZ, alpha/beta estimation
 │   ├── replication.R          # 50-seed Monte Carlo replication
-│   ├── plots.R                # All figure-generating functions
-│   ├── commentary_figure.R    # Science commentary figure (Fig. 1, 5 panels)
-│   └── export.R               # CSV/JSON export
+│   ├── plots.R                # All figure-generating functions (33 plot functions)
+│   ├── export.R               # CSV/JSON export
+│   ├── variance_components.R  # sigma_theta inflation reporting, sweep decomposition, MC UQ
+│   ├── bivariate_survival.R   # Joint S(t1,t2), ISE/sup/CvM/IAE metrics, concordance C(t)
+│   ├── ace_decomp.R           # ACE/ADE twin decomposition via OpenMx
+│   ├── age_dependence.R       # Conditional correlation, Kendall tau, cross-ratio by age
+│   └── export_estimands.R     # Standalone CSV/JSON export for estimand analyses
 ├── src/
 │   └── sim_lifespan_sr.cpp    # Rcpp/C++ SR solver (Xoroshiro128+ RNG, ~4.6x speedup)
 ├── tables/                    # Pipeline outputs (CSV/JSON)
-│   ├── scalars.json           # All scalar results (dynamic data binding for Typst)
-│   ├── summary.csv            # Main summary table
-│   ├── models.csv             # Cross-model validation
-│   ├── sweep.csv              # Full 81-cell sensitivity grid
-│   ├── anchored.csv           # 56-cell anchored grid
-│   ├── controls.csv           # Control experiments
-│   └── model_controls.csv     # MGG/SR control sweeps
-└── figures/                   # All generated figures (PNG, 29 files)
+│   ├── scalars.json           # All scalar results
+│   ├── ml_scalars.json        # ML vs moment comparison results
+│   ├── ml_vs_moment.csv       # Full ML experiment summary
+│   └── ...                    # Summary, sweep, anchored, controls, models CSVs
+├── figures/                   # All generated figures (43 PNG files)
+│   ├── fig_ml_scatter.png     # ML vs moment scatter
+│   ├── fig_ml_convergence.png # ML convergence strip plot
+│   └── ...                    # Main results, robustness, diagnostics, estimand figures
+└── webapp/                    # Interactive visualizations
 ```
 
 ## Reproducing
@@ -98,7 +95,7 @@ Parameters anchored to independent immunogenetic evidence: sigma\_gamma from twi
 install.packages(c("targets", "tarchetypes", "crew",
                     "MASS", "ggplot2", "patchwork", "lamW",
                     "ggpubr", "ggthemes", "viridis", "mvtnorm",
-                    "scales", "Rcpp"))
+                    "scales", "Rcpp", "OpenMx", "statmod", "jsonlite"))
 ```
 
 ### Run the pipeline
@@ -110,14 +107,11 @@ cd extrinsic-frailty-heritability
 # Full pipeline (~20 hours wall-clock on Apple M4 Pro, 10 parallel workers via crew)
 Rscript -e 'targets::tar_make()'
 
-# Inspect pipeline DAG
-Rscript -e 'targets::tar_visnetwork()'
-
-# Read a specific target
-Rscript -e 'targets::tar_read(sweep_results)'
+# ML comparison only (~4 minutes)
+Rscript -e 'targets::tar_make(names = c("ml_experiment", "ml_figures", "ml_export"))'
 ```
 
-The pipeline uses `{crew}` for parallel execution with 10 local workers. It defines 194 targets organized in a DAG with `tar_map` static branching for the 81-cell sensitivity sweep and 56-cell anchored sweep. A master seed (66829) propagates deterministic sub-seeds to every target for full reproducibility.
+The pipeline uses `{crew}` for parallel execution with 10 local workers. A master seed (66829) propagates deterministic sub-seeds to every target for full reproducibility.
 
 ### Pipeline stages
 
@@ -126,42 +120,31 @@ Stage 0:  Calibration          -> sigma_theta_true, oracle
 Stage 1:  Main arms            -> Arms 1-3, Controls A/B, Oracle fix
 Stage 2:  Sensitivity sweep    -> 81 cells (9x9 tar_map static branching)
 Stage 3:  Anchored sweep       -> 56 cells (7x8 tar_map static branching)
-Stage 4:  Variance decomp      -> alpha, beta coefficients (R^2 = 0.988)
+Stage 4:  Variance decomp      -> alpha, beta coefficients (R² = 0.988)
 Stage 5:  Model validation     -> MGG + SR families
 Stage 6:  Additional controls  -> Dose-response, pleiotropy isolation, irrelevant trait
 Stage 7:  Diagnostics          -> Joint r_MZ/r_DZ, sigma_gamma bridge, negative rho
 Stage 8:  Calibration UQ       -> Bootstrap uncertainty
-Stage 8b: Revision analyses    -> Functional forms (RC1), extended sigma_gamma (RC2),
-                                  MC uncertainty (RC3/RC3b), heritable fraction (RC4),
-                                  bivariate check (B5), MZ concordance (B6/B6b),
-                                  bridge uncertainty (B7)
+Stage 8b: Revision analyses    -> Functional forms, extended sigma_gamma, MC uncertainty,
+                                  heritable fraction, bivariate check, MZ concordance
 Stage 9:  Tables               -> CSV/JSON export
-Stage 10: Figures              -> All plots (29 figures)
+Stage 10: Figures              -> All plots
+Stage 11: Alternative estimands -> Variance components, bivariate survival, ACE, age dependence
+Stage 12: ML comparison        -> Full bivariate ML vs moment calibration (4 conditions × 3 sizes)
 ```
 
 ## Technical notes
 
 - **GM solver**: Closed-form via Lambert W function (`lamW`), with bisection fallback.
-- **MGG parameterization**: `a = a_0^q` (Strehler-Mildvan compensation). Shenhar's supplement states `a = a_0^(1/q)`, which does not produce hazard curve crossing and yields inconsistent twin correlations.
-- **SR solver**: Euler-Maruyama at weekly resolution (dt = 1/52), compiled to C++ via Rcpp with Xoroshiro128+ RNG (~4.6x speedup over vectorized R).
-- **Calibration**: 40-iteration stochastic bisection with common random numbers (CRN) for variance reduction.
+- **MGG parameterization**: `a = a_0^q` (Strehler-Mildvan compensation).
+- **SR solver**: Euler-Maruyama at weekly resolution (dt = 1/52), compiled to C++ via Rcpp with Xoroshiro128+ RNG (~4.6× speedup).
+- **ML estimation**: Bivariate MZ log-likelihood with Gauss-Hermite quadrature (64 nodes), left-truncation correction (age-15 cutoff), right-censoring at t_max=120, mean-frailty constraint E[A]=const.
+- **Calibration**: 40-iteration stochastic bisection with CRN for variance reduction.
 - **50,000 twin pairs** per zygosity per simulation (GM/MGG); 25,000 for SR.
 
-## Manuscript
+## Authors
 
-The compiled manuscript (`kornilov_manuscript_extended.pdf`) includes the full technical report with two appendices:
-- **Appendix A** (A.1-A.12): Computational implementation details
-- **Appendix B** (B.1-B.9): Formal proof of calibration inflation (delta-method analysis)
-
-Scalar results in `tables/scalars.json` are dynamically bound into the Typst source at compile time.
-
-## Author
-
-Sergey A. Kornilov, Biostochastics, Seattle, WA
-
-## Acknowledgements
-
-GPT-5.2-Pro (OpenAI) and Gemini-3-Pro (Google) were used during development to review the simulation design, verify that the calibration procedure parallels Shenhar et al.'s methodology, and provide structural feedback. MiniMax-M2.5 (MiniMax), GLM-5 (Zhipu AI), GPT-5.2-Pro, and Gemini-3-Pro were used to review and assist in deriving the formal proofs. Claude Opus 4.6 (Anthropic) was used for code generation, drafting assistance, and proof typesetting. All code, analytical results, and final text were reviewed and revised by the author.
+[TBD]
 
 ## License
 

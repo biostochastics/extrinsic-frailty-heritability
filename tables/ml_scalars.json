@@ -1,0 +1,7 @@
+{
+  "ml_infl_pct": 3,
+  "ml_infl_se_pct": 0.1,
+  "mom_infl_pct": 21.3,
+  "mom_infl_se_pct": 0.4,
+  "ml_minus_mom": -0.23
+}

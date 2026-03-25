@@ -279,7 +279,7 @@ run_negative_rho_sensitivity <- function(sigma_theta_true, params,
     rho_val <- rho_grid[i]
     seed_base <- params$MASTER_SEED + 60000L + round((rho_val + 1) * 1000)
 
-    rep_biases <- vapply(seq_len(n_reps), function(r) {
+    rep_results <- lapply(seq_len(n_reps), function(r) {
       sb <- seed_base + r * 100000L
       obs <- sim_twin_h2(sigma_theta_true, params$M_EX_HIST,
         sigma_gamma = params$SIGMA_GAMMA_DEF, rho = rho_val,
@@ -288,17 +288,32 @@ run_negative_rho_sensitivity <- function(sigma_theta_true, params,
       sigma_fit <- calibrate_sigma_theta(obs$r_mz, params$M_EX_HIST)
       corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
         rng_seed = sb + 5000L)
-      100 * (corr$h2 - oracle$h2)
-    }, numeric(1))
+      list(bias_pp = 100 * (corr$h2 - oracle$h2),
+           sigma_fit = sigma_fit)
+    })
+    rep_biases <- vapply(rep_results, `[[`, numeric(1), "bias_pp")
+    rep_sigmas <- vapply(rep_results, `[[`, numeric(1), "sigma_fit")
 
-    m <- mean(rep_biases); se <- sd(rep_biases) / sqrt(n_reps)
-    t_crit <- qt(0.975, df = n_reps - 1)
+    m <- mean(rep_biases)
+    se <- if (n_reps > 1) sd(rep_biases) / sqrt(n_reps) else NA_real_
+    ms <- mean(rep_sigmas)
+    ses <- if (n_reps > 1) sd(rep_sigmas) / sqrt(n_reps) else NA_real_
+    si <- 100 * (rep_sigmas / sigma_theta_true - 1)
+    msi <- mean(si)
+    sesi <- if (n_reps > 1) sd(si) / sqrt(n_reps) else NA_real_
+    t_crit <- if (n_reps > 1) qt(0.975, df = n_reps - 1) else NA_real_
     data.frame(
       rho = rho_val,
       bias_pp = m,
       se_pp = se,
-      lo95_pp = m - t_crit * se,
-      hi95_pp = m + t_crit * se,
+      lo95_pp = if (n_reps > 1) m - t_crit * se else NA_real_,
+      hi95_pp = if (n_reps > 1) m + t_crit * se else NA_real_,
+      sigma_fit = ms,
+      sigma_fit_se = ses,
+      sigma_infl_pct = msi,
+      sigma_infl_se = sesi,
+      sigma_infl_lo95 = if (n_reps > 1) msi - t_crit * sesi else NA_real_,
+      sigma_infl_hi95 = if (n_reps > 1) msi + t_crit * sesi else NA_real_,
       stringsAsFactors = FALSE
     )
   })
@@ -335,7 +350,7 @@ run_mz_concordance_sweep <- function(sigma_theta_true, oracle, params,
   r_gamma_grid <- sort(unique(c(seq(0, 1, by = 0.1), 0.85)))
 
   results <- lapply(r_gamma_grid, function(r_gam) {
-    biases <- vapply(seq_len(n_reps), function(rep) {
+    rep_results <- lapply(seq_len(n_reps), function(rep) {
       seed <- params$MASTER_SEED + 90000L + round(r_gam * 1000) + rep * 7L
 
       obs <- sim_twin_h2_concordance(
@@ -352,15 +367,26 @@ run_mz_concordance_sweep <- function(sigma_theta_true, oracle, params,
       corr <- sim_twin_h2(sigma_fit, 0, sigma_gamma = 0,
         rng_seed = seed + 50000L
       )
-      corr$h2 - oracle$h2
-    }, numeric(1))
+      list(bias = corr$h2 - oracle$h2, sigma_fit = sigma_fit)
+    })
+    biases <- vapply(rep_results, `[[`, numeric(1), "bias")
+    sigmas <- vapply(rep_results, `[[`, numeric(1), "sigma_fit")
+    si <- 100 * (sigmas / sigma_theta_true - 1)
+    t_crit <- if (n_reps > 1) qt(0.975, df = n_reps - 1) else NA_real_
+    msi <- mean(si)
+    sesi <- if (n_reps > 1) sd(si) / sqrt(n_reps) else NA_real_
 
     data.frame(
       r_gamma_mz = r_gam,
       bias_mean = mean(biases),
-      bias_se = sd(biases) / sqrt(n_reps),
+      bias_se = if (n_reps > 1) sd(biases) / sqrt(n_reps) else NA_real_,
       bias_pp = 100 * mean(biases),
-      se_pp = 100 * sd(biases) / sqrt(n_reps),
+      se_pp = if (n_reps > 1) 100 * sd(biases) / sqrt(n_reps) else NA_real_,
+      sigma_fit = mean(sigmas),
+      sigma_infl_pct = msi,
+      sigma_infl_se = sesi,
+      sigma_infl_lo95 = if (n_reps > 1) msi - t_crit * sesi else NA_real_,
+      sigma_infl_hi95 = if (n_reps > 1) msi + t_crit * sesi else NA_real_,
       n_reps = n_reps,
       stringsAsFactors = FALSE
     )

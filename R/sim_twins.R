@@ -196,6 +196,87 @@ sim_twin_h2 <- function(sigma_theta, m_ex, sigma_gamma = 0, rho = 0,
   )
 }
 
+#' Simulate twin pair lifespans and return raw paired data
+#'
+#' Like sim_twin_h2() but returns individual lifespan vectors instead of
+#' just summary statistics. Used by bivariate survival, ACE, and
+#' age-specific dependence analyses.
+#'
+#' @param sigma_theta SD of log-Gompertz intercept
+#' @param m_ex Extrinsic hazard rate
+#' @param sigma_gamma SD of log-extrinsic frailty
+#' @param rho Pleiotropy correlation
+#' @param gamma_heritable Whether gamma is shared between twins
+#' @param individual_ext Whether to use individual extrinsic rates
+#' @param cutoff Minimum age for inclusion
+#' @param n Number of twin pairs
+#' @param rng_seed RNG seed (NULL = don't set)
+#' @param ext_form Extrinsic frailty functional form
+#' @return List with L_mz1, L_mz2, L_dz1, L_dz2, keep_mz, keep_dz,
+#'   plus summary stats (r_mz, r_dz, h2, n_mz, n_dz)
+sim_twin_lifespans <- function(sigma_theta, m_ex, sigma_gamma = 0, rho = 0,
+                               gamma_heritable = TRUE, individual_ext = TRUE,
+                               cutoff = PARAMS$CUTOFF_AGE,
+                               n = PARAMS$N_PAIRS,
+                               rng_seed = NULL,
+                               ext_form = "lognormal") {
+  if (!is.null(rng_seed)) set.seed(rng_seed)
+
+  b <- PARAMS$B_GOMP
+  t_max <- PARAMS$T_MAX
+
+  # Extrinsic mapping (same as sim_twin_h2)
+  .make_c <- function(gamma_vec, m_ex_val, sg_val, ef) {
+    if (!individual_ext || sg_val == 0) return(rep(m_ex_val, length(gamma_vec)))
+    switch(ef,
+      lognormal = m_ex_val * exp(gamma_vec - sg_val^2 / 2),
+      additive  = m_ex_val * pmax(1 + gamma_vec, 0),
+      gamma = {
+        shape <- 1 / sg_val^2
+        p <- pnorm(gamma_vec / sg_val)
+        p <- pmin(pmax(p, 1e-10), 1 - 1e-10)
+        m_ex_val * qgamma(p, shape = shape, rate = shape)
+      },
+      stop("Unknown ext_form: ", ef)
+    )
+  }
+
+  # MZ twins
+  params_mz <- gen_twin_params_gm(n, r_g = 1.0, sigma_theta,
+                                   sigma_gamma, rho, gamma_heritable)
+  c_mz1 <- .make_c(params_mz$gamma1, m_ex, sigma_gamma, ext_form)
+  c_mz2 <- .make_c(params_mz$gamma2, m_ex, sigma_gamma, ext_form)
+  L_mz1 <- sim_lifespan_gm(params_mz$theta1, b, c_mz1, t_max)
+  L_mz2 <- sim_lifespan_gm(params_mz$theta2, b, c_mz2, t_max)
+
+  # DZ twins
+  params_dz <- gen_twin_params_gm(n, r_g = 0.5, sigma_theta,
+                                   sigma_gamma, rho, gamma_heritable)
+  c_dz1 <- .make_c(params_dz$gamma1, m_ex, sigma_gamma, ext_form)
+  c_dz2 <- .make_c(params_dz$gamma2, m_ex, sigma_gamma, ext_form)
+  L_dz1 <- sim_lifespan_gm(params_dz$theta1, b, c_dz1, t_max)
+  L_dz2 <- sim_lifespan_gm(params_dz$theta2, b, c_dz2, t_max)
+
+  # Apply cutoff
+  keep_mz <- (L_mz1 > cutoff) & (L_mz2 > cutoff)
+  keep_dz <- (L_dz1 > cutoff) & (L_dz2 > cutoff)
+
+  r_mz <- cor(L_mz1[keep_mz], L_mz2[keep_mz])
+  r_dz <- cor(L_dz1[keep_dz], L_dz2[keep_dz])
+
+  list(
+    # Raw paired lifespans
+    L_mz1 = L_mz1, L_mz2 = L_mz2,
+    L_dz1 = L_dz1, L_dz2 = L_dz2,
+    keep_mz = keep_mz, keep_dz = keep_dz,
+    # Summary statistics (compatible with sim_twin_h2 output)
+    r_mz = r_mz, r_dz = r_dz,
+    h2 = 2 * (r_mz - r_dz),
+    n_mz = sum(keep_mz), n_dz = sum(keep_dz),
+    frac_mz = mean(keep_mz), frac_dz = mean(keep_dz)
+  )
+}
+
 #' Simulate twin h² with variable within-MZ gamma concordance
 #'
 #' Like sim_twin_h2, but decomposes gamma into genetic + exposure components.

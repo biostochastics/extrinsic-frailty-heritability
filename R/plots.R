@@ -1799,3 +1799,644 @@ generate_all_figures <- function(summary_table, sweep_results, anchored_results,
 
   paths
 }
+
+
+# ===========================================================================
+# Alternative Estimand Figures (Stage 11)
+# ===========================================================================
+
+# Shorthand for arm colors used in estimand figures
+COL_ORACLE <- PAL[["Oracle"]]
+COL_NULL   <- PAL[["Null"]]
+COL_BIASED <- PAL[["Biased"]]
+COL_FIX    <- PAL[["Fix"]]
+MODEL_COLORS <- MODEL_PAL
+
+#' σ_θ inflation bar chart (primary estimand figure)
+plot_sigma_inflation <- function(vc) {
+  gm <- vc[vc$model == "GM", ]
+  gm$condition <- factor(gm$condition, levels = rev(gm$condition))
+
+  fill_vals <- c(
+    "Oracle" = COL_ORACLE,
+    "Baseline (correctly specified)" = COL_NULL,
+    "Misspecified (omitted extrinsic)" = COL_BIASED,
+    "Recovery (two-component refit)" = COL_FIX
+  )
+
+  ggplot2::ggplot(gm, ggplot2::aes(x = condition, y = sigma_infl_pct,
+                                    fill = condition)) +
+    ggplot2::geom_col(width = 0.7) +
+    ggplot2::geom_hline(yintercept = 0, linewidth = 0.5) +
+    ggplot2::geom_text(ggplot2::aes(
+      label = sprintf("%+.1f%%", sigma_infl_pct)),
+      hjust = ifelse(gm$sigma_infl_pct >= 0, -0.1, 1.1),
+      size = LABEL_SIZE) +
+    ggplot2::coord_flip() +
+    ggplot2::scale_fill_manual(values = fill_vals, guide = "none") +
+    ggplot2::labs(
+      x = NULL,
+      y = expression(sigma[theta] ~ "inflation (%)"),
+      title = expression("Primary estimand:" ~ Delta * sigma[theta])
+    ) +
+    theme_pub()
+}
+
+#' Multi-model σ_θ inflation comparison
+plot_sigma_inflation_multimodel <- function(vc) {
+  misspec <- vc[grepl("Misspecified", vc$condition), ]
+  misspec$model <- factor(misspec$model, levels = c("GM", "MGG", "SR"))
+
+  ggplot2::ggplot(misspec, ggplot2::aes(x = model, y = sigma_infl_pct,
+                                         fill = model)) +
+    ggplot2::geom_col(width = 0.6) +
+    ggplot2::geom_text(ggplot2::aes(
+      label = sprintf("%+.1f%%", sigma_infl_pct)),
+      vjust = -0.5, size = LABEL_SIZE) +
+    ggplot2::scale_fill_manual(values = MODEL_COLORS, guide = "none") +
+    ggplot2::labs(
+      x = "Survival model",
+      y = expression(sigma ~ "inflation (%)"),
+      title = "Intrinsic frailty inflation across models"
+    ) +
+    theme_pub()
+}
+
+#' Bivariate survival surface contour plots (3-panel: true, misspec, recovery)
+plot_bivariate_surface_contours <- function(surface_result, zygosity = "mz") {
+  t_grid <- surface_result$t_grid
+
+  make_panel <- function(S_obj, title) {
+    df <- expand.grid(t1 = t_grid, t2 = t_grid)
+    df$S <- as.vector(S_obj$S)
+    ggplot2::ggplot(df, ggplot2::aes(x = t1, y = t2, fill = S)) +
+      ggplot2::geom_raster(interpolate = TRUE) +
+      ggplot2::geom_contour(ggplot2::aes(z = S), color = "white", alpha = 0.5,
+                             breaks = c(0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9)) +
+      viridis::scale_fill_viridis(option = "D", limits = c(0, 1)) +
+      ggplot2::labs(x = expression(t[1]), y = expression(t[2]),
+                    title = title, fill = "S") +
+      ggplot2::coord_fixed() +
+      theme_pub(base_size = 12)
+  }
+
+  p1 <- make_panel(surface_result[[paste0("surface_true_", zygosity)]],
+                    "True DGP")
+  p2 <- make_panel(surface_result[[paste0("surface_misspec_", zygosity)]],
+                    "Misspecified")
+
+  fix_key <- paste0("surface_fix_", zygosity)
+  if (!is.null(surface_result[[fix_key]])) {
+    p3 <- make_panel(surface_result[[fix_key]], "Recovery")
+    p1 + p2 + p3 + patchwork::plot_layout(ncol = 3, guides = "collect")
+  } else {
+    p1 + p2 + patchwork::plot_layout(ncol = 2, guides = "collect")
+  }
+}
+
+#' Bivariate surface difference heatmap (misspec − true)
+plot_bivariate_surface_diff <- function(surface_result, zygosity = "mz") {
+  t_grid <- surface_result$t_grid
+  S_true <- surface_result[[paste0("surface_true_", zygosity)]]
+  S_misspec <- surface_result[[paste0("surface_misspec_", zygosity)]]
+
+  delta <- S_misspec$S - S_true$S
+  df <- expand.grid(t1 = t_grid, t2 = t_grid)
+  df$delta_S <- as.vector(delta)
+  lim <- max(abs(df$delta_S), na.rm = TRUE)
+
+  ggplot2::ggplot(df, ggplot2::aes(x = t1, y = t2, fill = delta_S)) +
+    ggplot2::geom_raster(interpolate = TRUE) +
+    ggplot2::geom_contour(ggplot2::aes(z = delta_S),
+                           color = "grey30", alpha = 0.5) +
+    ggplot2::scale_fill_gradient2(low = "#2166AC", mid = "white",
+                                   high = "#B2182B",
+                                   midpoint = 0, limits = c(-lim, lim)) +
+    ggplot2::labs(x = expression(t[1]), y = expression(t[2]),
+                  title = paste0("Surface misfit (", toupper(zygosity), ")"),
+                  fill = expression(Delta * S)) +
+    ggplot2::coord_fixed() +
+    theme_pub()
+}
+
+#' Concordance curves C(t) across models
+plot_concordance_curves <- function(surface_result, zygosity = "mz") {
+  dfs <- list()
+  for (model in c("true", "misspec", "fix")) {
+    key <- paste0("conc_", model, "_", zygosity)
+    if (!is.null(surface_result[[key]])) {
+      df <- surface_result[[key]]
+      df$model <- switch(model,
+        true = "True DGP", misspec = "Misspecified", fix = "Recovery")
+      dfs[[model]] <- df
+    }
+  }
+  combined <- do.call(rbind, dfs)
+  combined <- combined[!is.na(combined$concordance), ]
+
+  model_cols <- c("True DGP" = COL_ORACLE,
+                  "Misspecified" = COL_BIASED,
+                  "Recovery" = COL_FIX)
+
+  ggplot2::ggplot(combined, ggplot2::aes(x = age, y = concordance,
+                                          color = model)) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::geom_ribbon(ggplot2::aes(
+      ymin = if ("lo95" %in% names(combined)) lo95 else concordance - 1.96 * se,
+      ymax = if ("hi95" %in% names(combined)) hi95 else concordance + 1.96 * se,
+      fill = model),
+      alpha = 0.15, color = NA) +
+    ggplot2::scale_color_manual(values = model_cols) +
+    ggplot2::scale_fill_manual(values = model_cols) +
+    ggplot2::labs(
+      x = "Age (years)",
+      y = expression("C(t) = P(T"[2] * " > t | T"[1] * " > t)"),
+      title = paste0("Concordance (", toupper(zygosity), ")"),
+      color = NULL, fill = NULL
+    ) +
+    theme_pub()
+}
+
+#' ACE variance component stacked bars
+plot_ace_components <- function(ace_analysis, transform_filter = "rank") {
+  df <- ace_analysis$summary
+  df <- df[df$transform == transform_filter &
+           df$model_type == "ACE" &
+           df$converged, ]
+  if (nrow(df) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  # Reshape to long
+  long <- rbind(
+    data.frame(arm = df$arm, component = "A (additive genetic)",
+               proportion = df$a2, stringsAsFactors = FALSE),
+    data.frame(arm = df$arm, component = "C (shared environment)",
+               proportion = df$c2, stringsAsFactors = FALSE),
+    data.frame(arm = df$arm, component = "E (unique environment)",
+               proportion = df$e2, stringsAsFactors = FALSE)
+  )
+  long$component <- factor(long$component,
+    levels = c("E (unique environment)",
+               "C (shared environment)",
+               "A (additive genetic)"))
+  long$arm <- factor(long$arm, levels = unique(df$arm))
+
+  ggplot2::ggplot(long, ggplot2::aes(x = arm, y = proportion,
+                                      fill = component)) +
+    ggplot2::geom_col(width = 0.7, position = "stack") +
+    ggplot2::scale_fill_manual(values = c(
+      "A (additive genetic)" = COL_ORACLE,
+      "C (shared environment)" = "#D68910",
+      "E (unique environment)" = "#999999"
+    )) +
+    ggplot2::scale_y_continuous(labels = scales::percent) +
+    ggplot2::labs(x = NULL, y = "Variance proportion",
+                  title = "ACE decomposition by arm",
+                  fill = NULL) +
+    theme_pub() +
+    ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 30, hjust = 1))
+}
+
+#' Age-specific conditional correlation curves
+plot_age_conditional_correlation <- function(age_dep, zygosity = "MZ") {
+  df <- age_dep$correlations
+  df <- df[df$zygosity == zygosity & !is.na(df$cor_pearson), ]
+  if (nrow(df) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  model_cols <- c(true_dgp = COL_ORACLE,
+                  misspecified = COL_BIASED,
+                  recovery = COL_FIX)
+  model_labs <- c(true_dgp = "True DGP",
+                  misspecified = "Misspecified",
+                  recovery = "Recovery")
+
+  ggplot2::ggplot(df, ggplot2::aes(x = age, y = cor_pearson,
+                                    color = model)) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::scale_color_manual(values = model_cols, labels = model_labs) +
+    ggplot2::labs(
+      x = "Age threshold (years)",
+      y = expression("cor(" * T[1] * "," ~ T[2] * " | both > t)"),
+      title = paste0("Conditional correlation (", zygosity, ")"),
+      color = NULL
+    ) +
+    theme_pub()
+}
+
+#' Cross-ratio comparison on diagonal (MZ)
+plot_cross_ratio <- function(age_dep) {
+  df <- age_dep$cross_ratio
+  df <- df[!is.na(df$cross_ratio) & is.finite(df$cross_ratio) &
+           df$cross_ratio > 0, ]
+  if (nrow(df) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  model_cols <- c(true_dgp = COL_ORACLE,
+                  misspecified = COL_BIASED,
+                  recovery = COL_FIX)
+  model_labs <- c(true_dgp = "True DGP",
+                  misspecified = "Misspecified",
+                  recovery = "Recovery")
+
+  ggplot2::ggplot(df, ggplot2::aes(x = age, y = cross_ratio,
+                                    color = model)) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::geom_hline(yintercept = 1, linetype = "dashed", alpha = 0.5) +
+    ggplot2::scale_color_manual(values = model_cols, labels = model_labs) +
+    ggplot2::scale_y_log10() +
+    ggplot2::labs(
+      x = "Age (years)",
+      y = expression(Theta(t, t)),
+      title = expression("Cross-ratio" ~ Theta(t, t) ~ "(MZ)"),
+      color = NULL
+    ) +
+    theme_pub()
+}
+
+#' Generate all alternative estimand figures
+generate_estimand_figures <- function(variance_components,
+                                      sweep_variance_decomp,
+                                      variance_component_uq,
+                                      bivariate_surface,
+                                      ace_analysis,
+                                      age_dependence,
+                                      sigma_theta_true) {
+  figdir <- "figures"
+  if (!dir.exists(figdir)) dir.create(figdir, recursive = TRUE)
+  W <- 7; H <- 5
+
+  paths <- list()
+
+  # E1: σ_θ inflation bar chart
+  paths$e1 <- save_figure(
+    plot_sigma_inflation(variance_components),
+    "fig_e1_sigma_inflation.png", width = W, height = H, outdir = figdir)
+
+  # E2: Multi-model σ_θ inflation
+  paths$e2 <- save_figure(
+    plot_sigma_inflation_multimodel(variance_components),
+    "fig_e2_sigma_inflation_multimodel.png",
+    width = W, height = 4, outdir = figdir)
+
+  # E3: Raw bivariate surfaces — DROPPED (differences invisible on 0-1 scale;
+  #      use E4 difference heatmap instead)
+
+  # E4: Surface difference heatmap (the informative version)
+  paths$e4 <- save_figure(
+    plot_bivariate_surface_diff(bivariate_surface, "mz"),
+    "fig_e4_surface_diff_mz.png",
+    width = 6, height = 5, outdir = figdir)
+
+  # E5: Concordance curves (MZ)
+  paths$e5 <- save_figure(
+    plot_concordance_curves(bivariate_surface, "mz"),
+    "fig_e5_concordance_mz.png", width = W, height = H, outdir = figdir)
+
+  # E6: ACE decomposition
+  paths$e6 <- save_figure(
+    plot_ace_components(ace_analysis),
+    "fig_e6_ace_components.png", width = W, height = H, outdir = figdir)
+
+  # E7: Age-specific conditional correlation (MZ)
+  paths$e7 <- save_figure(
+    plot_age_conditional_correlation(age_dependence, "MZ"),
+    "fig_e7_age_cor_mz.png", width = W, height = H, outdir = figdir)
+
+  # E8: Age-specific conditional correlation (DZ)
+  paths$e8 <- save_figure(
+    plot_age_conditional_correlation(age_dependence, "DZ"),
+    "fig_e8_age_cor_dz.png", width = W, height = H, outdir = figdir)
+
+  # E9: Cross-ratio — DROPPED (too noisy from finite-difference estimation
+  #      of second derivatives on empirical step surface; conditional
+  #      correlation E7/E8 shows the same pattern much more clearly)
+
+  # E10: Composite (primary estimand + concordance + age correlation)
+  p_left <- plot_sigma_inflation(variance_components)
+  p_mid <- plot_concordance_curves(bivariate_surface, "mz")
+  p_right <- plot_age_conditional_correlation(age_dependence, "MZ")
+  p_composite <- p_left + p_mid + p_right +
+    patchwork::plot_layout(ncol = 3) +
+    patchwork::plot_annotation(tag_levels = "A")
+  paths$e10 <- save_figure(
+    p_composite,
+    "fig_e10_estimand_composite.png",
+    width = 14, height = 5, outdir = figdir)
+
+  paths
+}
+
+
+# ===========================================================================
+# σ-inflation-first sensitivity plots (CTR primary estimand versions)
+# ===========================================================================
+
+#' Crosswalk: Falconer h² bias vs σ_θ inflation across sweep grid
+plot_crosswalk <- function(sweep_results) {
+  df <- sweep_results[!is.na(sweep_results$sigma_infl_pct), ]
+  if (nrow(df) == 0) return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  ggplot2::ggplot(df, ggplot2::aes(x = sigma_infl_pct,
+                                    y = 100 * bias)) +
+    ggplot2::geom_point(ggplot2::aes(color = rho), size = 2, alpha = 0.7) +
+    ggplot2::geom_smooth(method = "lm", se = FALSE, color = "grey40",
+                          linewidth = 0.8, linetype = "dashed") +
+    viridis::scale_color_viridis(option = "C", name = expression(rho)) +
+    ggplot2::labs(
+      x = expression(sigma[theta] ~ "inflation (%)"),
+      y = expression("Falconer" ~ h^2 ~ "bias (pp)"),
+      title = expression("Crosswalk:" ~ sigma[theta] ~ "inflation" %->%
+                          "Falconer" ~ h^2 ~ "bias")
+    ) +
+    theme_pub()
+}
+
+#' Negative ρ sweep — σ_θ inflation version (with CIs)
+plot_negative_rho_sigma <- function(neg_rho_df) {
+  if (!"sigma_infl_pct" %in% names(neg_rho_df))
+    return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  ggplot2::ggplot(neg_rho_df, ggplot2::aes(x = rho, y = sigma_infl_pct)) +
+    ggplot2::geom_ribbon(ggplot2::aes(
+      ymin = sigma_infl_lo95, ymax = sigma_infl_hi95),
+      fill = COL_BIASED, alpha = 0.15) +
+    ggplot2::geom_line(color = COL_BIASED, linewidth = 1) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+    ggplot2::geom_vline(xintercept = 0, linetype = "dotted", alpha = 0.3) +
+    ggplot2::labs(
+      x = expression("Genetic correlation" ~ rho),
+      y = expression(sigma[theta] ~ "inflation (%)"),
+      title = expression("Sign reversal:" ~ sigma[theta] ~ "inflation vs" ~ rho)
+    ) +
+    theme_pub()
+}
+
+#' Negative ρ sweep — multi-model dispersion inflation version
+plot_negative_rho_sigma_multimodel <- function(neg_rho_gm, model_controls) {
+  gm <- neg_rho_gm[, c("rho", "sigma_infl_pct", "sigma_infl_lo95",
+                         "sigma_infl_hi95")]
+  gm$model <- "GM"
+
+  mc <- model_controls[model_controls$sweep_type == "negative_rho", ]
+  if (nrow(mc) > 0 && "disp_infl_pct" %in% names(mc)) {
+    for (mdl in unique(mc$model)) {
+      sub <- mc[mc$model == mdl, ]
+      # Use t-critical with n_reps (default 20 seeds)
+      n_reps_mc <- nrow(sub)
+      tc <- if (n_reps_mc > 1) qt(0.975, df = n_reps_mc - 1) else NA_real_
+      gm <- rbind(gm, data.frame(
+        rho = sub$sweep_val,
+        sigma_infl_pct = sub$disp_infl_pct,
+        sigma_infl_lo95 = sub$disp_infl_pct - tc * sub$disp_infl_se,
+        sigma_infl_hi95 = sub$disp_infl_pct + tc * sub$disp_infl_se,
+        model = toupper(sub$model),
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+  gm$model <- factor(gm$model, levels = c("GM", "MGG", "SR"))
+
+  ggplot2::ggplot(gm, ggplot2::aes(x = rho, y = sigma_infl_pct,
+                                    color = model, fill = model)) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = sigma_infl_lo95,
+                                       ymax = sigma_infl_hi95),
+                          alpha = 0.1, color = NA) +
+    ggplot2::geom_line(linewidth = 1) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+    ggplot2::scale_color_manual(values = MODEL_PAL) +
+    ggplot2::scale_fill_manual(values = MODEL_PAL) +
+    ggplot2::labs(
+      x = expression("Genetic correlation" ~ rho),
+      y = "Dispersion inflation (%)",
+      title = "Sign reversal across mortality models",
+      color = NULL, fill = NULL
+    ) +
+    theme_pub()
+}
+
+#' Dose-response — σ_θ inflation version
+plot_dose_response_sigma <- function(dose_response) {
+  dr <- if (is.data.frame(dose_response)) dose_response else dose_response$summary
+  if (!"sigma_infl_pct" %in% names(dr))
+    return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  ggplot2::ggplot(dr, ggplot2::aes(x = m_ex, y = sigma_infl_pct)) +
+    ggplot2::geom_line(color = COL_BIASED, linewidth = 1) +
+    ggplot2::geom_point(color = COL_BIASED, size = 2) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+    ggplot2::geom_vline(xintercept = 0.004, linetype = "dotted",
+                         alpha = 0.3) +
+    ggplot2::annotate("text", x = 0.0045, y = max(dr$sigma_infl_pct) * 0.3,
+                       label = "historical", size = ANNOT_SIZE,
+                       hjust = 0, color = "grey50") +
+    ggplot2::labs(
+      x = expression("Extrinsic mortality" ~ m[ex]),
+      y = expression(sigma[theta] ~ "inflation (%)"),
+      title = expression("Dose-response:" ~ sigma[theta] ~ "inflation vs" ~ m[ex])
+    ) +
+    theme_pub()
+}
+
+#' Heritable fraction sweep — σ_θ inflation version
+plot_mex_split_sigma <- function(mex_split_hires) {
+  if (!"sigma_infl_pct" %in% names(mex_split_hires))
+    return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  agg <- aggregate(sigma_infl_pct ~ frac_heritable,
+                   data = mex_split_hires, FUN = mean)
+  se_agg <- aggregate(sigma_infl_pct ~ frac_heritable,
+                      data = mex_split_hires,
+                      FUN = function(x) sd(x) / sqrt(length(x)))
+  n_agg <- aggregate(sigma_infl_pct ~ frac_heritable,
+                     data = mex_split_hires, FUN = length)
+  agg$se <- se_agg$sigma_infl_pct
+  agg$t_crit <- qt(0.975, df = pmax(n_agg$sigma_infl_pct - 1, 1))
+
+  ggplot2::ggplot(agg, ggplot2::aes(x = frac_heritable,
+                                     y = sigma_infl_pct)) +
+    ggplot2::geom_ribbon(ggplot2::aes(
+      ymin = sigma_infl_pct - t_crit * se,
+      ymax = sigma_infl_pct + t_crit * se),
+      fill = COL_BIASED, alpha = 0.15) +
+    ggplot2::geom_line(color = COL_BIASED, linewidth = 1) +
+    ggplot2::geom_point(color = COL_BIASED, size = 2) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
+    ggplot2::labs(
+      x = "Heritable fraction of extrinsic mortality",
+      y = expression(sigma[theta] ~ "inflation (%)"),
+      title = expression("Heritable fraction:" ~ sigma[theta] ~ "inflation")
+    ) +
+    theme_pub()
+}
+
+#' MZ concordance sweep — σ_θ inflation version
+plot_mz_concordance_sigma <- function(mz_concordance,
+                                       mz_concordance_decoupled = NULL) {
+  if (!"sigma_infl_pct" %in% names(mz_concordance))
+    return(ggplot2::ggplot() + ggplot2::theme_void())
+
+  p <- ggplot2::ggplot(mz_concordance, ggplot2::aes(
+    x = r_gamma_mz, y = sigma_infl_pct)) +
+    ggplot2::geom_line(color = COL_ORACLE, linewidth = 1) +
+    ggplot2::geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5)
+
+  if (!is.null(mz_concordance_decoupled) &&
+      "sigma_infl_pct" %in% names(mz_concordance_decoupled)) {
+    p <- p + ggplot2::geom_line(
+      data = mz_concordance_decoupled,
+      ggplot2::aes(x = r_gamma_mz, y = sigma_infl_pct),
+      color = COL_BIASED, linewidth = 1, linetype = "dashed")
+  }
+
+  p + ggplot2::labs(
+    x = expression("Within-MZ extrinsic concordance" ~ r[gamma * ",MZ"]),
+    y = expression(sigma[theta] ~ "inflation (%)"),
+    title = expression(sigma[theta] ~ "inflation vs MZ concordance")
+  ) + theme_pub()
+}
+
+#' σ_θ inflation heatmap over (ρ, σ_γ) grid
+plot_sigma_inflation_heatmap <- function(sweep_results) {
+  df <- sweep_results[!is.na(sweep_results$sigma_infl_pct), ]
+
+  lim <- max(abs(df$sigma_infl_pct), na.rm = TRUE)
+
+  # Axis order matches existing plot_sweep_heatmap (x=sigma_gamma, y=rho)
+  ggplot2::ggplot(df, ggplot2::aes(x = sigma_gamma, y = rho,
+                                    fill = sigma_infl_pct)) +
+    ggplot2::geom_tile() +
+    ggplot2::scale_fill_gradient2(
+      low = "#2166AC", mid = "white", high = "#B2182B",
+      midpoint = 0, limits = c(-lim, lim),
+      name = expression(sigma[theta] ~ "inflation (%)")) +
+    ggplot2::labs(
+      x = expression("Extrinsic heterogeneity" ~ sigma[gamma]),
+      y = expression("Genetic correlation" ~ rho),
+      title = expression(sigma[theta] ~ "inflation across sensitivity grid")
+    ) +
+    theme_pub()
+}
+
+# ---------------------------------------------------------------------------
+# ML vs moment estimation comparison plots
+# ---------------------------------------------------------------------------
+
+#' ML vs Moment sigma_theta scatter plot
+#'
+#' Each point is one MC replicate. Points above the identity line mean
+#' ML inflates less than moment.
+plot_ml_vs_moment_scatter <- function(ml_results) {
+  df <- ml_results$results
+  df$label_f <- factor(df$label,
+    levels = c("sanity", "default", "no_pleiotropy", "extreme"),
+    labels = c("Correctly specified", "Misspecified (default)",
+               "No pleiotropy", "Extreme heterogeneity"))
+
+  # Use project palette: green for correct, red for misspec, purple/orange for variants
+  cond_colors <- c(
+    "Correctly specified"    = PAL[["Null"]],
+    "Misspecified (default)" = PAL[["Biased"]],
+    "No pleiotropy"          = PAL[["Pleiotropy"]],
+    "Extreme heterogeneity"  = PAL[["Hamilton"]]
+  )
+  cond_shapes <- c(
+    "Correctly specified" = 16, "Misspecified (default)" = 17,
+    "No pleiotropy" = 15, "Extreme heterogeneity" = 18
+  )
+
+  true_sigma <- unique(df$sigma_theta_true)[1]
+
+  ggplot2::ggplot(df, ggplot2::aes(x = sigma_theta_moment, y = sigma_theta_ml,
+                                     color = label_f, shape = label_f)) +
+    ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+                          color = "grey60", linewidth = 0.5) +
+    ggplot2::geom_hline(yintercept = true_sigma, linetype = "dotted",
+                         color = "grey40", linewidth = 0.4) +
+    ggplot2::geom_vline(xintercept = true_sigma, linetype = "dotted",
+                         color = "grey40", linewidth = 0.4) +
+    ggplot2::geom_point(alpha = 0.6, size = 2.2) +
+    ggplot2::scale_color_manual(values = cond_colors) +
+    ggplot2::scale_shape_manual(values = cond_shapes) +
+    ggplot2::annotate("text", x = true_sigma, y = Inf,
+                       label = expression("true" ~ sigma[theta]),
+                       hjust = 1.1, vjust = 1.5, size = ANNOT_SIZE,
+                       color = "grey40", fontface = "italic") +
+    ggplot2::labs(
+      x = expression(hat(sigma)[theta]^"moment"),
+      y = expression(hat(sigma)[theta]^"ML"),
+      color = NULL, shape = NULL,
+      title = "ML vs moment calibration"
+    ) +
+    theme_pub() +
+    ggplot2::theme(legend.position = "right")
+}
+
+#' Convergence strip plot for ML and moment estimates
+#'
+#' Shows individual estimates as jittered points with mean + 95% CI bars,
+#' matching the style of plot_mc_uncertainty_multimodel.
+plot_ml_convergence <- function(ml_results, condition = "default") {
+  df <- ml_results$results
+  df <- df[df$label == condition, ]
+
+  true_sigma <- unique(df$sigma_theta_true)[1]
+
+  # Reshape to long
+  df_long <- rbind(
+    data.frame(n_pairs = df$n_pairs, estimator = "ML",
+               sigma_hat = df$sigma_theta_ml, stringsAsFactors = FALSE),
+    data.frame(n_pairs = df$n_pairs, estimator = "Moment",
+               sigma_hat = df$sigma_theta_moment, stringsAsFactors = FALSE)
+  )
+  df_long$n_label <- paste0("n = ", formatC(df_long$n_pairs,
+                                              format = "d", big.mark = ","))
+  df_long$n_label <- factor(df_long$n_label,
+    levels = paste0("n = ", formatC(sort(unique(df_long$n_pairs)),
+                                      format = "d", big.mark = ",")))
+  df_long$estimator <- factor(df_long$estimator, levels = c("ML", "Moment"))
+
+  # Compute summary per group
+  summ <- do.call(rbind, lapply(
+    split(df_long, interaction(df_long$n_label, df_long$estimator)),
+    function(d) {
+      n <- nrow(d)
+      m <- mean(d$sigma_hat)
+      se <- sd(d$sigma_hat) / sqrt(n)
+      t_crit <- if (n > 1) qt(0.975, n - 1) else 1.96
+      data.frame(n_label = d$n_label[1], estimator = d$estimator[1],
+                 mean = m, lo = m - t_crit * se, hi = m + t_crit * se,
+                 stringsAsFactors = FALSE)
+    }
+  ))
+
+  est_colors <- c("ML" = PAL[["Oracle"]], "Moment" = PAL[["Biased"]])
+
+  ggplot2::ggplot(df_long, ggplot2::aes(x = sigma_hat, y = estimator,
+                                          color = estimator)) +
+    ggplot2::facet_wrap(~ n_label, ncol = 1) +
+    # True sigma reference
+    ggplot2::geom_vline(xintercept = true_sigma, linetype = "dotted",
+                         color = "grey40", linewidth = 0.5) +
+    # Individual seeds (faint)
+    ggplot2::geom_jitter(alpha = 0.4, size = 1.8, height = 0.15, width = 0) +
+    # Mean + CI
+    ggplot2::geom_pointrange(data = summ,
+      ggplot2::aes(x = mean, xmin = lo, xmax = hi, y = estimator),
+      color = "grey10", size = 0.5, linewidth = 0.8, fatten = 3) +
+    # Mean label
+    ggplot2::geom_text(data = summ,
+      ggplot2::aes(x = mean, y = estimator,
+                    label = sprintf("%.3f", mean)),
+      vjust = -1.2, size = LABEL_SIZE, color = "grey20") +
+    ggplot2::scale_color_manual(values = est_colors, guide = "none") +
+    ggplot2::labs(
+      x = expression(hat(sigma)[theta]),
+      y = NULL,
+      title = "Convergence to pseudo-true",
+      subtitle = expression(paste("Default DGP: ", sigma[gamma], " = 0.40, ",
+                                    rho, " = 0.4"))
+    ) +
+    theme_pub() +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(size = ggplot2::rel(0.9)),
+      axis.text.y = ggplot2::element_text(size = ggplot2::rel(0.95))
+    )
+}

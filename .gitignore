@@ -48,6 +48,9 @@ _targets/
 # Playwright MCP
 .playwright-mcp/
 
+# Web app (WIP)
+webapp/
+
 # Environment / secrets
 .env
 .env.*

@@ -597,12 +597,14 @@ run_model_control_sweep <- function(model_name, sweep_type, params,
         oracle_h2 = oracle$h2, extrap_h2 = oracle$h2,
         bias = 0, bias_pp = 0, se_pp = 0,
         lo95_pp = 0, hi95_pp = 0,
+        disp_fit = true_disp, disp_infl_pct = 0,
+        disp_infl_se = 0,
         stringsAsFactors = FALSE
       ))
     }
 
     # Run n_reps independent seeds per grid point
-    rep_biases <- vapply(seq_len(n_reps), function(r) {
+    rep_results <- lapply(seq_len(n_reps), function(r) {
       seed_i <- seed_base + 1000L * i + r * 100000L
 
       # 1. Simulate observed
@@ -626,8 +628,12 @@ run_model_control_sweep <- function(model_name, sweep_type, params,
       extrap_args[[disp_name]] <- calib_disp
       extrap <- do.call(sim_fn, extrap_args)
 
-      100 * (extrap$h2 - oracle$h2)
-    }, numeric(1))
+      list(bias_pp = 100 * (extrap$h2 - oracle$h2),
+           disp_fit = calib_disp)
+    })
+    rep_biases <- vapply(rep_results, `[[`, numeric(1), "bias_pp")
+    rep_disps <- vapply(rep_results, `[[`, numeric(1), "disp_fit")
+    disp_infl <- 100 * (rep_disps / true_disp - 1)
 
     m <- mean(rep_biases)
     se <- if (n_reps > 1) sd(rep_biases) / sqrt(n_reps) else NA_real_
@@ -641,6 +647,9 @@ run_model_control_sweep <- function(model_name, sweep_type, params,
       se_pp = se,
       lo95_pp = m - t_crit * se,
       hi95_pp = m + t_crit * se,
+      disp_fit = mean(rep_disps),
+      disp_infl_pct = mean(disp_infl),
+      disp_infl_se = if (n_reps > 1L) sd(disp_infl) / sqrt(n_reps) else NA_real_,
       stringsAsFactors = FALSE
     )
   }
