@@ -83,6 +83,17 @@ Parameters anchored to independent immunogenetic evidence:
 │   ├── fig_ml_scatter.png     # ML vs moment scatter
 │   ├── fig_ml_convergence.png # ML convergence strip plot
 │   └── ...                    # Main results, robustness, diagnostics, estimand figures
+├── lean/                      # Lean 4 formal proofs of Appendix B propositions
+│   ├── CalibrationInflation.lean          # Root import (all modules)
+│   ├── CalibrationInflation/
+│   │   ├── Params.lean                    # Parameter structure + positivity lemmas
+│   │   ├── Monotonicity.lean              # Prop B2: Falconer h² strict monotonicity
+│   │   ├── Moments.lean                   # Moment definitions, feasibility condition
+│   │   ├── Calibration.lean               # Calibration equation existence + expanded form
+│   │   ├── Inflation.lean                 # Prop B1: variance inflation (ρ ≥ 0)
+│   │   └── SignReversal.lean              # Cor B3: deflation under negative pleiotropy
+│   ├── lakefile.toml                      # Lake build configuration (Mathlib dependency)
+│   └── lean-toolchain                     # Lean 4 v4.29.0-rc8
 └── webapp/                    # Interactive visualizations
 ```
 
@@ -141,6 +152,21 @@ Stage 12: ML comparison        -> Full bivariate ML vs moment calibration (4 con
 - **ML estimation**: Bivariate MZ log-likelihood with Gauss-Hermite quadrature (64 nodes), left-truncation correction (age-15 cutoff), right-censoring at t_max=120, mean-frailty constraint E[A]=const.
 - **Calibration**: 40-iteration stochastic bisection with CRN for variance reduction.
 - **50,000 twin pairs** per zygosity per simulation (GM/MGG); 25,000 for SR.
+
+## Formal verification (Lean 4)
+
+The `lean/` directory contains machine-checked proofs of the analytic results in Appendix B using [Lean 4](https://lean-lang.org/) with [Mathlib](https://leanprover-community.github.io/). The formalization covers:
+
+- **Proposition B1** — Under non-negative pleiotropy (ρ ≥ 0) and feasibility, the calibrated intrinsic dispersion exceeds the true value: ŝ_θ > σ_θ.
+- **Proposition B2** — The Falconer heritability function h²(σ) = κ²σ²/(2κ²σ² + ε²) is strictly monotone increasing on (0, ∞), proved algebraically via cross-multiplication.
+- **Corollary B3** — Sufficient condition for sign reversal: when ρ < −(κ_γ σ_γ)/(2√2 κ_θ σ_θ), calibration deflates ŝ_θ < σ_θ.
+
+To build (requires Lean 4 toolchain):
+
+```bash
+cd lean
+lake build
+```
 
 ## Authors
 
